@@ -16,7 +16,7 @@ class Susceptible:
 class Infected:
     """Infected entity (agent)"""
     viral_load: float
-    days_infected: int
+    days_infected: int = 0
     infectious: bool = True
 
 @dataclass
@@ -42,3 +42,5 @@ class Quarantined:
     start_day: int 
     compliance_level: float
     duration: int = 14
+    days_in_quarantine: int = 0
+    
