@@ -90,7 +90,7 @@ class NetworkTransmissionSystem(esper.Processor):
                     transmission_modifier *= (1 - quarantine.compliance_level * 0.9)  # Reduce transmission probability based on compliance level, up to 90% reduction
                 adjusted_prob = self.base_prob * transmission_modifier
 
-            for contact_iD, strength in zip(contact_net.contacts, contact_net.contact_strenght):
+            for contact_iD, strength in zip(contact_net.contacts, contact_net.contact_strength):
                 if esper.has_component(contact_iD, Susceptible):
                     sus_status = esper.component_for_entity(contact_iD, Susceptible)
                     prob = adjusted_prob * strength * (1 - sus_status.immunity) * inf_status.viral_load / 1000
