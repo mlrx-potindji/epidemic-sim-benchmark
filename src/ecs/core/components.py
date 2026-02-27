@@ -34,7 +34,7 @@ class Demographics:
 class ContactNetwork:
     """Who contacts whom on network"""
     contacts: List[int] # entities iD
-    contact_strenght: List[float] # 
+    contact_strength: List[float] # how strong is the contact (0-1)
 
 @dataclass
 class Quarantined:
