@@ -87,7 +87,9 @@ class SIREpidemicModel:
         self._initial_infection() # Infect initial entities at the start of the simulation
         
         self.time_series_data: defaultdict[str, List[int]] = defaultdict(list) # Initialize time series data storage
-    
+
+        self.spatial_location_series_data: defaultdict[str, List[List[tuple]]] = defaultdict(list) # Initialize spatial location series data storage
+
     def _population_components(self):
         """
         Assigns components to each entity in the population, 
@@ -224,9 +226,47 @@ class SIREpidemicModel:
                 print(f"Simulation ended at step {self.step_count} - no more infected entities.")
                 break
 
+    def get_spatial_data(self):
+        """
+        Retrieves the spatial data (locations) of all entities in the simulation.
+
+        Parameters:
+        - None
+
+        Returns:
+        - A list of tuples containing the (x, y) coordinates of each entity.
+        """
+
+        esper.switch_world(self.world_name)  # Ensure we're operating in the correct world
+
+        for entiy, (sus, location) in esper.get_components(Susceptible, Location):
+            self.spatial_location_series_data["susceptible"].append((location.x, location.y))
+
+        for entiy, (inf, location) in esper.get_components(Infected, Location):
+            self.spatial_location_series_data["infected"].append((location.x, location.y))
+
+        for entiy, (rec, location) in esper.get_components(Recovered, Location):
+            self.spatial_location_series_data["recovered"].append((location.x, location.y))
+
+        return self.spatial_location_series_data
     
-        
-        
+    def clean_up(self):
+        """
+        Cleans up the world by removing all entities and their components, resetting the simulation state.
+
+        Parameters:
+        - None
+
+        Returns:
+        - None (world is cleaned up directly).
+        """
+
+        esper.switch_world("default")  # Ensure we're operating in the correct world
+
+        if self.world_name != "default":
+            esper.delete_world(self.world_name)  # Delete the custom world to clean up all entities and components
+
+
 
 
     
