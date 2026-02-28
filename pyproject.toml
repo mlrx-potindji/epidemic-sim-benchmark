@@ -8,7 +8,8 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "mesa (>=3.5.0,<4.0.0)",
-    "esper (>=3.7,<4.0)"
+    "esper (>=3.7,<4.0)",
+    "matplotlib (>=3.10.8,<4.0.0)"
 ]
 
 [tool.poetry]
