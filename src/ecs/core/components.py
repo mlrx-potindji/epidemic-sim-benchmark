@@ -25,6 +25,12 @@ class Recovered:
     immunity: float 
 
 @dataclass
+class Dead:
+    """Dead entity (agent)"""
+    reason: str = "Disease"
+    day_of_death: int = 0
+
+@dataclass
 class Demographics:
     """Basic entity (agent) characteristics"""
     age: int

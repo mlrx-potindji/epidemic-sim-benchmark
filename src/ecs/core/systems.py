@@ -123,7 +123,9 @@ class DiseaseProgressionSystem(esper.Processor):
                     esper.remove_component(entity, Infected)
                     esper.add_component(entity, Recovered(immunity=0.9))  # Recovered with some immunity
                 else:
-                    esper.delete_entity(entity)  # Entity dies
+                    esper.remove_component(entity, Infected)
+                    esper.add_component(entity, Dead(reason = "Disease",
+                                                     day_of_death = infected.days_infected))  # Died from disease
 
 class QuarantineSystem(esper.Processor):
     """Reduce mobility and transmission for quarantined entities"""

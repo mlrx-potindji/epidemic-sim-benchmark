@@ -200,11 +200,15 @@ class SIREpidemicModel:
         n_susceptible = len(esper.get_component(Susceptible))
         n_infected = len(esper.get_component(Infected))
         n_recovered = len(esper.get_component(Recovered))
+        n_death = len(esper.get_component(Dead))
 
         self.time_series_data["time"].append(self.step_count)
         self.time_series_data["susceptible"].append(n_susceptible)
         self.time_series_data["infected"].append(n_infected)
         self.time_series_data["recovered"].append(n_recovered)
+        self.time_series_data["death"].append(n_death)
+
+        return self.time_series_data
 
     def run(self, max_steps: int):  
         """
@@ -240,14 +244,17 @@ class SIREpidemicModel:
 
         esper.switch_world(self.world_name)  # Ensure we're operating in the correct world
 
-        for entiy, (sus, location) in esper.get_components(Susceptible, Location):
+        for entity, (sus, location) in esper.get_components(Susceptible, Location):
             self.spatial_location_series_data["susceptible"].append((location.x, location.y))
 
         for entiy, (inf, location) in esper.get_components(Infected, Location):
             self.spatial_location_series_data["infected"].append((location.x, location.y))
 
-        for entiy, (rec, location) in esper.get_components(Recovered, Location):
+        for entity, (rec, location) in esper.get_components(Recovered, Location):
             self.spatial_location_series_data["recovered"].append((location.x, location.y))
+
+        for entity, (death, location) in esper.get_components(Dead, Location):
+            self.spatial_location_series_data["death"].append((location.x, location.y))
 
         return self.spatial_location_series_data
     
