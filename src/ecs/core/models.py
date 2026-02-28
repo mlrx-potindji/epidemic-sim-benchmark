@@ -1,5 +1,6 @@
 from collections import defaultdict
 from .systems import *
+import random
 from typing import List
 import numpy as np
 import esper
@@ -88,7 +89,7 @@ class SIREpidemicModel:
         
         self.time_series_data: defaultdict[str, List[int]] = defaultdict(list) # Initialize time series data storage
 
-        self.spatial_location_series_data: defaultdict[str, List[List[tuple]]] = defaultdict(list) # Initialize spatial location series data storage
+        self.spatial_location_series_data: defaultdict[str, List[tuple[float, float]]] = defaultdict(list) # Initialize spatial location series data storage
 
     def _population_components(self):
         """
