@@ -118,6 +118,12 @@ class DiseaseProgressionSystem(esper.Processor):
             infected.days_infected += 1
 
             # Simple progression logic: after recovery_time days, recover or die
+
+                    # Possible changes and improvements
+            # With repspect to changes to quanrantine logic on recovery and death:
+            #   - consider we should consider including death probability here also
+            #   and draw from that probability to determine if the entity dies during the infectious period
+            #   which would then also impact quarantine end logic in the QuarantineSystem.
             if infected.days_infected >= self.recovery_time:
                 if random.random() < 0.98:  # 98% chance to recover
                     esper.remove_component(entity, Infected)
@@ -150,6 +156,12 @@ class QuarantineSystem(esper.Processor):
             quarantine.days_in_quarantine += 1
 
             # End quarantine after duration
+
+                    # Possible changes and improvements
+            # With respect to recovery and death
+            #   - Allow for early release if recovered
+            #   - allow for death during quarantine (would need to add death probability from being infectious) and 
+            #     change quarantine end logic to also check for death.
             if quarantine.days_in_quarantine >= quarantine.duration:
                 esper.remove_component(entity, Quarantined)     
         

@@ -89,7 +89,7 @@ class SIREpidemicModel:
         
         self.time_series_data: defaultdict[str, List[int]] = defaultdict(list) # Initialize time series data storage
 
-        self.spatial_location_series_data: defaultdict[str, List[tuple[float, float]]] = defaultdict(list) # Initialize spatial location series data storage
+        self.spatial_location_series_data: defaultdict[str, List[tuple[int, float, float]]] = defaultdict(list) # Initialize spatial location series data storage
 
     def _population_components(self):
         """
@@ -184,6 +184,7 @@ class SIREpidemicModel:
         esper.process()
 
         self._collect_data()  # Collect data after processing systems
+        self.get_spatial_data()  # Collect spatial data after processing systems
         self.step_count += 1 # Increment the step count after processing systems and collecting data
 
     def _collect_data(self):
@@ -245,16 +246,16 @@ class SIREpidemicModel:
         esper.switch_world(self.world_name)  # Ensure we're operating in the correct world
 
         for entity, (sus, location) in esper.get_components(Susceptible, Location):
-            self.spatial_location_series_data["susceptible"].append((location.x, location.y))
+            self.spatial_location_series_data["susceptible"].append((self.step_count, location.x, location.y))
 
-        for entiy, (inf, location) in esper.get_components(Infected, Location):
-            self.spatial_location_series_data["infected"].append((location.x, location.y))
+        for entity, (inf, location) in esper.get_components(Infected, Location):
+            self.spatial_location_series_data["infected"].append((self.step_count, location.x, location.y))
 
         for entity, (rec, location) in esper.get_components(Recovered, Location):
-            self.spatial_location_series_data["recovered"].append((location.x, location.y))
+            self.spatial_location_series_data["recovered"].append((self.step_count, location.x, location.y))
 
         for entity, (death, location) in esper.get_components(Dead, Location):
-            self.spatial_location_series_data["death"].append((location.x, location.y))
+            self.spatial_location_series_data["death"].append((self.step_count, location.x, location.y))
 
         return self.spatial_location_series_data
     
