@@ -1,3 +1,4 @@
+import math
 import esper
 import random
 from .components import *
@@ -66,6 +67,44 @@ class SpatialTransmissionSystem(esper.Processor):
                                 infectious=True
                             ))
 
+class SpatialTransmissionSystemNew(esper.Processor):
+    def __init__(self, transmission_radius: float, base_transmission_prob: float):
+        super().__init__()
+        self.transmission_radius = transmission_radius
+        self.base_prob = base_transmission_prob
+
+    def process(self):
+        infected_entities = [
+            (eid, inf, loc)
+            for eid, (inf, loc) in esper.get_components(Infected, Location)
+            if inf.infectious and not esper.has_component(eid, Quarantined)
+        ]
+
+        if not infected_entities:
+            return  # No infectious entities, skip processing
+        
+        for sus_entity, (sus, sus_loc) in esper.get_components(Susceptible, Location):
+            accumulated_prob = 0.0
+
+            for inf_entity, inf, inf_loc in infected_entities:
+                dx = inf_loc.x - sus_loc.x
+                dy = inf_loc.y - sus_loc.y
+                distance = math.sqrt(dx**2 + dy**2)
+
+                if distance <= self.transmission_radius:
+                    prob = (self.base_prob * inf.viral_load / 1000) * (1 - sus.immunity)
+                    accumulated_prob += prob
+
+            if accumulated_prob > 0:
+                self._add_hazard(sus_entity, accumulated_prob)
+   
+    @staticmethod
+    def _add_hazard(entity_id: int, hazard: float):
+        if esper.has_component(entity_id, InfectionHazard):
+            esper.component_for_entity(entity_id, InfectionHazard).hazard += hazard
+        else:
+            esper.add_component(entity_id, InfectionHazard(hazard=hazard))
+
 class NetworkTransmissionSystem(esper.Processor):
     """Infectious entities can transmit to connected susceptible entities"""
 
@@ -78,7 +117,7 @@ class NetworkTransmissionSystem(esper.Processor):
         infected = list(esper.get_components(Infected, ContactNetwork))
 
         for inf_entity, (inf_status, contact_net) in infected:
-            if not inf_status.infectious or esper.has_component(inf_entity, Quarantined):
+            if not inf_status.infectious: #or esper.has_component(inf_entity, Quarantined):
                 # If the infected entity is not currently infectious skip transmission attempts
                 continue  
 
@@ -104,6 +143,66 @@ class NetworkTransmissionSystem(esper.Processor):
                             days_infected=0,
                             infectious=True
                         ))
+
+class NetworkTransmissionSystemNew(esper.Processor):
+    def __init__(self, base_transmission_prob: float):
+        super().__init__()
+        self.base_prob = base_transmission_prob
+    
+    def process(self):
+
+        for inf_entity, (inf_status, contact_net) in esper.get_components(Infected, ContactNetwork):
+            if not inf_status.infectious:
+                continue  # Skip if not currently infectious
+
+            # for quarantine, same logic as before, it reduces but does not eliminate transmission
+            transmission_modifier = 1.0
+
+            if esper.has_component(inf_entity, Quarantined):
+                quarantine = esper.component_for_entity(inf_entity, Quarantined)
+                if quarantine.compliance_level > 0:
+                    transmission_modifier *= (1 - quarantine.compliance_level * 0.9)
+
+            adjusted_prob = self.base_prob * transmission_modifier
+
+            for contact_iD, strength in zip(contact_net.contacts, contact_net.contact_strength):
+                if not esper.has_component(contact_iD, Susceptible):
+                    continue  # Skip if contact is not susceptible
+                sus_entity = esper.component_for_entity(contact_iD, Susceptible)
+                hazard_network = adjusted_prob * strength * (1 - sus_entity.immunity) * inf_status.viral_load / 1000
+
+                if hazard_network > 0:
+                    self._add_hazard(contact_iD, hazard_network)
+
+    @staticmethod
+    def _add_hazard(entity_id: int, hazard: float):
+        if esper.has_component(entity_id, InfectionHazard):
+            esper.component_for_entity(entity_id, InfectionHazard).hazard += hazard
+        else:
+            esper.add_component(entity_id, InfectionHazard(hazard=hazard))
+
+class InfectionResolutionSystem(esper.Processor):
+    def __init__(self, dt: float = 1.0):
+        super().__init__()
+        self.dt = dt
+
+    def process(self):
+        to_resolve = list(esper.get_components(Susceptible, InfectionHazard))
+
+        for entity, (susceptible, hazard) in to_resolve:
+            prob = 1 - math.exp(-hazard.hazard * self.dt)  # Convert hazard to probability
+
+            if random.random() < prob:
+                esper.remove_component(entity, Susceptible)
+                esper.add_component(entity, Infected(
+                    viral_load=random.uniform(500, 1000), 
+                    days_infected=0,
+                    infectious=True
+                ))
+
+            # Remove the hazard component after processing
+            if esper.has_component(entity, InfectionHazard):
+                esper.remove_component(entity, InfectionHazard)
 
 class DiseaseProgressionSystem(esper.Processor):
     """Infected entities progress through disease stages"""
@@ -133,6 +232,12 @@ class DiseaseProgressionSystem(esper.Processor):
                     esper.add_component(entity, Dead(reason = "Disease",
                                                      day_of_death = infected.days_infected))  # Died from disease
 
+            # remove mobility component for dead entities in the MovementSystem
+            if esper.has_component(entity, Dead):
+                if esper.has_component(entity, Demographics):
+                    demographics = esper.component_for_entity(entity, Demographics)
+                    demographics.mobility = 0.0  # Dead entities do not move
+                    
 class QuarantineSystem(esper.Processor):
     """Reduce mobility and transmission for quarantined entities"""
 
