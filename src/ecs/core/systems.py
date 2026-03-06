@@ -225,7 +225,7 @@ class DiseaseProgressionSystem(esper.Processor):
             #   and draw from that probability to determine if the entity dies during the infectious period
             #   which would then also impact quarantine end logic in the QuarantineSystem.
             if infected.days_infected >= infected.recovery_time:
-                if random.random() < 0.98:  # 98% chance to recover
+                if random.random() < random.uniform(0.80, 0.98):  
                     esper.remove_component(entity, Infected)
                     esper.add_component(entity, Recovered(immunity=0.9))  # Recovered with some immunity
                 else:
@@ -235,7 +235,16 @@ class DiseaseProgressionSystem(esper.Processor):
                     if esper.has_component(entity, Demographics):
                         esper.component_for_entity(entity, Demographics).mobility = 0.0  # Dead entities do not move
             
-                    
+            # End quarantine if entity recovers or dies during quarantine
+            # This logic assumes that quarantine does not end immediately upon recovery or death, 
+            # but rather that the entity is removed from quarantine at the next scheduled check
+                if esper.has_component(entity, Quarantined) and not esper.has_component(entity, Dead) and not esper.has_component(entity, Infected):
+                    quarantine = esper.component_for_entity(entity, Quarantined)
+                    if esper.has_component(entity, Demographics):
+                        demo = esper.component_for_entity(entity, Demographics)
+                        demo.mobility = quarantine.original_mobility
+                    esper.remove_component(entity, Quarantined)   
+
 class QuarantineSystem(esper.Processor):
     """Reduce mobility and transmission for quarantined entities"""
 
@@ -249,9 +258,10 @@ class QuarantineSystem(esper.Processor):
                 # Quarantine infectious entities with some compliance level
                 if random.random() < self.compliance:
                     esper.add_component(entity, Quarantined(
-                        start_day=infected.days_infected,
-                        compliance_level=self.compliance,
-                        duration=14
+                        start_day = infected.days_infected,
+                        compliance_level = self.compliance,
+                        duration = 14,
+                        original_mobility = demographics.mobility
                     ))
                     demographics.mobility *= (1 - self.compliance * 0.9)  # Reduce mobility based on compliance level, up to 90% reduction
 
@@ -267,6 +277,9 @@ class QuarantineSystem(esper.Processor):
             #   - allow for death during quarantine (would need to add death probability from being infectious) and 
             #     change quarantine end logic to also check for death.
             if quarantine.days_in_quarantine >= quarantine.duration:
+                if esper.has_component(entity, Demographics) and not esper.has_component(entity, Dead):
+                    demographics = esper.component_for_entity(entity, Demographics)
+                    demographics.mobility = quarantine.original_mobility  # Restore original mobility
                 esper.remove_component(entity, Quarantined)     
         
         # Reduce mobility for quarantined entities

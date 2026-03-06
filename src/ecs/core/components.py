@@ -51,6 +51,7 @@ class Quarantined:
     compliance_level: float
     duration: int = 14
     days_in_quarantine: int = 0
+    original_mobility: float = 0.0  # Store original mobility to restore after quarantine
 
 @dataclass
 class InfectionHazard:
