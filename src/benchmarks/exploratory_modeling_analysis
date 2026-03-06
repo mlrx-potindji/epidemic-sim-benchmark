@@ -1,0 +1,76 @@
+from ecs.core.models import SIREpidemicModel
+from ema_workbench import BooleanParameter, CategoricalParameter, Model, RealParameter, ScalarOutcome, IntegerParameter, TimeSeriesOutcome, perform_experiments, Samplers
+from ema_workbench.analysis import pairs_plotting
+from ema_workbench.analysis.plotting import lines
+import matplotlib.pyplot as plt
+import numpy as np
+
+def run_ecs_epidemic(
+        transmission_rate_spatial, transmission_rate_network,
+        transmission_radius, average_contacts, seed,
+        enable_quarantine):
+
+    world_name = f"world_{seed}"
+
+    model = SIREpidemicModel(n_agents = 500, world_size = 500, initial_infected = 10,
+                             seed = seed,
+                             spatial_new = False, network_new = False,
+                             space_attribute_similarity = False, enable_quarantine = enable_quarantine,
+                             beta_network=transmission_rate_network, beta_spatial=transmission_rate_spatial,
+                             transmission_radius=transmission_radius, average_contacts=average_contacts,
+                             world_name=world_name, recovery_time=12)
+    
+    model.run(max_steps=400)
+    data = model._collect_data()
+
+    outcome = {
+        "final_infected": data["infected"][-1],
+        "peak_infected": max(data["infected"]),
+        "time_to_peak": np.argmax(data["infected"]),
+        "epidemic_duration": model._collect_data()["time"][-1],
+        "final_susceptible": data["susceptible"][-1]
+        #"infected_time_series": data["infected"]
+    }
+    model.clean_up()
+    return outcome
+    
+
+ecs_model = Model("ECSEpidemic", function = run_ecs_epidemic)
+
+ecs_model.uncertainties = [
+    RealParameter("transmission_rate_spatial", 0.01, 0.1),
+    RealParameter("transmission_rate_network", 0.05, 0.2),  
+    RealParameter("transmission_radius", 1, 10),
+    IntegerParameter("average_contacts", 1, 20),
+    IntegerParameter("seed", 1, 1000)
+]
+
+ecs_model.levers = [
+    CategoricalParameter("enable_quarantine", ("true", "false"))
+]
+
+ecs_model.outcomes = [
+    ScalarOutcome("final_infected", kind = ScalarOutcome.MINIMIZE),
+    ScalarOutcome("peak_infected", kind = ScalarOutcome.MINIMIZE),
+    ScalarOutcome("time_to_peak", kind = ScalarOutcome.MINIMIZE),
+    ScalarOutcome("epidemic_duration", kind = ScalarOutcome.MINIMIZE)
+    #TimeSeriesOutcome("infected_time_series")
+]
+
+results = perform_experiments(ecs_model, 
+                              scenarios=28,
+                              policies=2,
+                              uncertainty_sampling=Samplers.SOBOL)
+
+experiments, outcomes = results
+
+fig, axes = pairs_plotting.pairs_scatter(
+    experiments, outcomes, group_by = "enable_quarantine", legend=False
+)
+fig.set_size_inches(8, 8)
+fig.savefig("pairs_plot.png")
+plt.show()
+
+#figure, axes = lines(experiments, outcomes, outcomes_to_show="infected_time_series", show_envelope=True, group_by="enable_quarantine", legend=True)
+#figure.savefig("time_series_plot.png")
+#plt.show()
