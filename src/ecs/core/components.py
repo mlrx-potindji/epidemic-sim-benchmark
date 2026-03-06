@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List
 
 @dataclass
@@ -17,7 +17,8 @@ class Infected:
     """Infected entity (agent)"""
     viral_load: float
     days_infected: int = 0
-    infectious: bool = True
+    infectious: bool = True # can be used to model incubation period or isolation effects 
+                            # if set to False and then back to True after some days
 
 @dataclass
 class Recovered:
@@ -39,8 +40,8 @@ class Demographics:
 @dataclass
 class ContactNetwork:
     """Who contacts whom on network"""
-    contacts: List[int] # entities iD
-    contact_strength: List[float] # how strong is the contact (0-1)
+    contacts: List[int] = field(default_factory=list)  # entities iD
+    contact_strength: List[float] = field(default_factory=list)  # how strong is the contact (0-1)
 
 @dataclass
 class Quarantined:
@@ -49,4 +50,14 @@ class Quarantined:
     compliance_level: float
     duration: int = 14
     days_in_quarantine: int = 0
-    
+
+@dataclass
+class InfectionHazard:
+    """
+    Transient component that is created or updated by hazard calculation system 
+    and consumed by infection system to determine if susceptible agents become infected.
+
+    Multiple hazard systems write additively into this component so that InfectionResolutionSystem 
+    sees a single FOI and combine it once: p = 1 - exp(-lambda * dt)
+    """
+    hazard: float = 0.0

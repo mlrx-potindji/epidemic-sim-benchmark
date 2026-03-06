@@ -1,10 +1,11 @@
 from collections import defaultdict
 from .systems import *
 import random
-from typing import List
+from typing import List, Optional
 import numpy as np
 import esper
 import copy
+import math
 
 class Entity:
     """
@@ -39,7 +40,9 @@ class SIREpidemicModel:
                  initial_infected: int = 5, average_contacts: int = 10, 
                  beta_spatial: float = 0.05, beta_network: float = 0.1,
                  recovery_time: int = 12, enable_quarantine: bool = False, 
-                 transmission_radius: float = 4.0, world_name: str = "default_world"):
+                 transmission_radius: float = 4.0, world_name: str = "default_world",
+                 spatial_new: Optional[bool] = False, network_new: Optional[bool] = False,
+                 space_attribute_similarity: Optional[bool] = False,  dt: float = 1.0):
 
     # Initialize model parameters
         self.n_agents = n_agents
@@ -52,6 +55,7 @@ class SIREpidemicModel:
         self.enable_quarantine = enable_quarantine
         self.seed = seed
         self.transmission_radius = transmission_radius
+        self.dt = dt
         
         # Switch to world if not provided
         self.world_name = world_name
@@ -66,18 +70,32 @@ class SIREpidemicModel:
         self.step_count = 0
 
         # Register systems
-        esper.add_processor(MovementSystem(world_height = world_size, world_width = world_size))
+        esper.add_processor(MovementSystem(world_height = world_size, world_width = world_size), 
+                            priority = 100)
 
-        esper.add_processor(SpatialTransmissionSystem(transmission_radius = transmission_radius, 
-                                                      base_transmission_prob = beta_spatial))
-        
-        esper.add_processor(NetworkTransmissionSystem(base_transmission_prob = beta_network))
+        if spatial_new:
+            esper.add_processor(SpatialTransmissionSystemNew(transmission_radius = transmission_radius, 
+                                                      base_transmission_prob = beta_spatial),
+                                                      priority = 90)
+        else:
+            esper.add_processor(SpatialTransmissionSystem(transmission_radius = transmission_radius, 
+                                                      base_transmission_prob = beta_spatial),
+                                                      priority = 90)
+        if network_new:
+            esper.add_processor(NetworkTransmissionSystemNew(base_transmission_prob = beta_network), 
+                                 priority = 80)
+        else:
+            esper.add_processor(NetworkTransmissionSystem(base_transmission_prob = beta_network), 
+                                 priority = 80)
+            
+        if spatial_new and network_new:
+            esper.add_processor(InfectionResolutionSystem(dt = self.dt), priority = 70)
+
+        esper.add_processor(DiseaseProgressionSystem(recovery_time = recovery_time), priority = 60)
 
         if enable_quarantine:
             # Example quarantine compliance level, can be adjusted as needed
-            esper.add_processor(QuarantineSystem(quarantine_compliance = 0.8)) 
-
-        esper.add_processor(DiseaseProgressionSystem(recovery_time = recovery_time))
+            esper.add_processor(QuarantineSystem(quarantine_compliance = 0.8), priority = 60) 
 
         self.entities = Entity(n_agents) # store full Entity object to access both population and IDs
         self.entities.populate() # create the population of entities
@@ -86,6 +104,11 @@ class SIREpidemicModel:
         self._population_components() # assign components to each entity in the population
 
         self._initial_infection() # Infect initial entities at the start of the simulation
+
+        if space_attribute_similarity:
+            self._space_attribute_similatirty_network() # Create contact network based on spatial and attribute similarity
+        else:
+            self._create_social_network() # Create contact network based on Poisson distribution of average contacts
         
         self.time_series_data: defaultdict[str, List[int]] = defaultdict(list) # Initialize time series data storage
 
@@ -112,14 +135,13 @@ class SIREpidemicModel:
 
             esper.add_component(entity, Demographics(
                 age = np.random.randint(0, 75),
-                mobility = np.random.uniform(0.5, 2.0)
+                mobility = np.random.uniform(0.5, 9.0)
             ))
 
             esper.add_component(entity, Susceptible(
                 immunity = np.random.uniform(0, 0.05)
             ))
 
-        self._create_social_network()
 
     def _create_social_network(self):
         """
@@ -148,7 +170,59 @@ class SIREpidemicModel:
 
                 esper.add_component(entity, ContactNetwork(contacts = contacts, 
                                                            contact_strength = strengths))
-    
+    def _space_attribute_similatirty_network(self):
+        # alpha = distance sensitivity
+        # tau = attribute similarity sensitivity
+
+        alpha = 0.95
+        tau = 0.75
+
+        for entity in self.entity_iDs:
+            num_contacts = max(0, int(np.random.poisson(self.average_contacts)))
+
+            if num_contacts == 0:
+                continue
+
+            position_i = esper.component_for_entity(entity, Location)
+            demographics_i = esper.component_for_entity(entity, Demographics).age
+
+            candidates = []
+            weights = []
+
+            others = [ent for ent in self.entity_iDs if ent != entity]
+            for other in others:
+                position_j = esper.component_for_entity(other, Location)
+                demographics_j = esper.component_for_entity(other, Demographics).age
+
+                distance_ij = math.sqrt((position_i.x - position_j.x) ** 2 + (position_i.y - position_j.y) ** 2)
+                attribute_simlarity_ij = abs(demographics_i - demographics_j)
+
+                similarity_ij = math.exp(-distance_ij / alpha) * math.exp(-attribute_simlarity_ij / tau)
+
+                candidates.append(other)
+                weights.append(similarity_ij)
+
+                total_weight = sum(weights)
+                if total_weight == 0:
+                    continue
+
+                probability = [weight / total_weight for weight in weights]
+                contacts = list(np.random.choice(candidates, 
+                                                 size = min(num_contacts, len(candidates)), 
+                                                 replace = False, 
+                                                 p = probability))
+                
+                strengths = [(weights[candidates.index(contact)] / total_weight) for contact in contacts]
+
+                esper.add_component(entity, ContactNetwork(contacts = contacts,
+                                                           contact_strength = strengths))
+
+    def _degree_constrained_similarity_network(self):
+        pass
+
+    def _multidim_homophily_network(self):
+        pass
+
     def _initial_infection(self):
         """
         Infects a specified number of entities at the start of the simulation by changing their status from Susceptible to Infected.
