@@ -12,7 +12,6 @@ class MovementSystem(esper.Processor):
         self.width = world_width
         self.height = world_height
         
-
     def process(self):
 
         # list[tuple[int, tuple[_C, _C2]]] == list[tuple[entity_iD, (Location, Demographics)]]
@@ -64,7 +63,8 @@ class SpatialTransmissionSystem(esper.Processor):
                             esper.add_component(sus_entity, Infected(
                                 viral_load=random.uniform(500, 1000), 
                                 days_infected=0,
-                                infectious=True
+                                infectious=True,
+                                recovery_time = max(1, int(random.normalvariate(12, 4))) # Recovery time drawn from normal distribution with mean 12 days and std dev 4 days, minimum of 1 day
                             ))
 
 class SpatialTransmissionSystemNew(esper.Processor):
@@ -141,7 +141,8 @@ class NetworkTransmissionSystem(esper.Processor):
                         esper.add_component(contact_iD, Infected(
                             viral_load=random.uniform(500, 1000), 
                             days_infected=0,
-                            infectious=True
+                            infectious=True,
+                            recovery_time = max(1, int(random.normalvariate(12, 4))) # Recovery time drawn from normal distribution with mean 12 days and std dev 4 days, minimum of 1 day
                         ))
 
 class NetworkTransmissionSystemNew(esper.Processor):
@@ -195,9 +196,10 @@ class InfectionResolutionSystem(esper.Processor):
             if random.random() < prob:
                 esper.remove_component(entity, Susceptible)
                 esper.add_component(entity, Infected(
-                    viral_load=random.uniform(500, 1000), 
-                    days_infected=0,
-                    infectious=True
+                    viral_load = random.uniform(500, 1000), 
+                    days_infected = 0,
+                    infectious = True,
+                    recovery_time = max(1, int(random.normalvariate(12, 4))) #
                 ))
 
             # Remove the hazard component after processing
@@ -207,9 +209,8 @@ class InfectionResolutionSystem(esper.Processor):
 class DiseaseProgressionSystem(esper.Processor):
     """Infected entities progress through disease stages"""
 
-    def __init__(self, recovery_time: float = 12): # Purposely set to 12 (shorter that quarantine duration)
+    def __init__(self): # Purposely set to 12 (shorter that quarantine duration)
         super().__init__()
-        self.recovery_time = recovery_time
 
     def process(self):
         for entity, infected in esper.get_component(Infected):
@@ -223,7 +224,7 @@ class DiseaseProgressionSystem(esper.Processor):
             #   - consider we should consider including death probability here also
             #   and draw from that probability to determine if the entity dies during the infectious period
             #   which would then also impact quarantine end logic in the QuarantineSystem.
-            if infected.days_infected >= self.recovery_time:
+            if infected.days_infected >= infected.recovery_time:
                 if random.random() < 0.98:  # 98% chance to recover
                     esper.remove_component(entity, Infected)
                     esper.add_component(entity, Recovered(immunity=0.9))  # Recovered with some immunity
@@ -231,12 +232,9 @@ class DiseaseProgressionSystem(esper.Processor):
                     esper.remove_component(entity, Infected)
                     esper.add_component(entity, Dead(reason = "Disease",
                                                      day_of_death = infected.days_infected))  # Died from disease
-
-            # remove mobility component for dead entities in the MovementSystem
-            if esper.has_component(entity, Dead):
-                if esper.has_component(entity, Demographics):
-                    demographics = esper.component_for_entity(entity, Demographics)
-                    demographics.mobility = 0.0  # Dead entities do not move
+                    if esper.has_component(entity, Demographics):
+                        esper.component_for_entity(entity, Demographics).mobility = 0.0  # Dead entities do not move
+            
                     
 class QuarantineSystem(esper.Processor):
     """Reduce mobility and transmission for quarantined entities"""
@@ -255,6 +253,7 @@ class QuarantineSystem(esper.Processor):
                         compliance_level=self.compliance,
                         duration=14
                     ))
+                    demographics.mobility *= (1 - self.compliance * 0.9)  # Reduce mobility based on compliance level, up to 90% reduction
 
         # Update quarantine status
         for entity, quarantine in esper.get_component(Quarantined):
@@ -271,8 +270,8 @@ class QuarantineSystem(esper.Processor):
                 esper.remove_component(entity, Quarantined)     
         
         # Reduce mobility for quarantined entities
-        for entity, (quarantine, demographics) in esper.get_components(Quarantined, Demographics):
-            demographics.mobility *= (1 - quarantine.compliance_level * 0.9)  # Reduce mobility based on compliance level, up to 90% reduction      
+        #for entity, (quarantine, demographics) in esper.get_components(Quarantined, Demographics):
+        #    demographics.mobility *= (1 - quarantine.compliance_level * 0.9)  # Reduce mobility based on compliance level, up to 90% reduction      
 
         # Reduce transmission for quarantined entities in the SpatialTransmissionSystem and NetworkTransmissionSystem
         for entity, quarantine in esper.get_component(Quarantined):

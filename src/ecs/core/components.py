@@ -19,6 +19,7 @@ class Infected:
     days_infected: int = 0
     infectious: bool = True # can be used to model incubation period or isolation effects 
                             # if set to False and then back to True after some days
+    recovery_time: int = 0  # days until recovery (or death) --- can be used to model disease progression and quarantine duration
 
 @dataclass
 class Recovered:

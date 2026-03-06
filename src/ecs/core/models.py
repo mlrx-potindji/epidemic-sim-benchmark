@@ -39,7 +39,7 @@ class SIREpidemicModel:
     def __init__(self, seed: int, n_agents: int = 500, world_size: int = 100, 
                  initial_infected: int = 5, average_contacts: int = 10, 
                  beta_spatial: float = 0.05, beta_network: float = 0.1,
-                 recovery_time: int = 12, enable_quarantine: bool = False, 
+                 enable_quarantine: bool = False, 
                  transmission_radius: float = 4.0, world_name: str = "default_world",
                  spatial_new: Optional[bool] = False, network_new: Optional[bool] = False,
                  space_attribute_similarity: Optional[bool] = False,  dt: float = 1.0):
@@ -51,7 +51,7 @@ class SIREpidemicModel:
         self.average_contacts = average_contacts
         self.beta_spatial = beta_spatial
         self.beta_network = beta_network
-        self.recovery_time = recovery_time
+        #self.recovery_time = recovery_time
         self.enable_quarantine = enable_quarantine
         self.seed = seed
         self.transmission_radius = transmission_radius
@@ -91,7 +91,7 @@ class SIREpidemicModel:
         if spatial_new and network_new:
             esper.add_processor(InfectionResolutionSystem(dt = self.dt), priority = 70)
 
-        esper.add_processor(DiseaseProgressionSystem(recovery_time = recovery_time), priority = 60)
+        esper.add_processor(DiseaseProgressionSystem(), priority = 60)
 
         if enable_quarantine:
             # Example quarantine compliance level, can be adjusted as needed
@@ -171,11 +171,105 @@ class SIREpidemicModel:
                 esper.add_component(entity, ContactNetwork(contacts = contacts, 
                                                            contact_strength = strengths))
     def _space_attribute_similatirty_network(self):
-        # alpha = distance sensitivity
-        # tau = attribute similarity sensitivity
+        """
+        Constructs a weighted contact network where tie formation is jointly governed
+        by spatial proximity and age-based attribute similarity (homophily).
 
-        alpha = 0.95
-        tau = 0.75
+        Network topology
+        ----------------
+        This is a spatially-embedded homophily network. Each agent forms contacts
+        preferentially with others who are both geographically close and
+        demographically similar in age. The resulting structure exhibits:
+
+        - High local clustering: agents predominantly connect within tight
+          spatial and demographic neighbourhoods
+        - Low long-range bridging: few connections span large distances or age gaps,
+          producing lattice-like rather than small-world topology
+        - Spatially structured epidemic diffusion: the pathogen spreads as a
+          wave front through local clusters rather than jumping globally,
+          producing slower epidemic growth and lower final attack rates compared
+          to random contact networks
+
+        Tie probability
+        ---------------
+        For each pair (i, j), a similarity weight is computed as:
+
+            w_ij = exp(-d_ij / alpha) * exp(-|age_i - age_j| / tau)
+
+        where d_ij is the Euclidean distance between agents i and j.
+        Both terms are in (0, 1], so w_ij = 1.0 only if agents are co-located
+        and identical in age, decaying toward 0 with distance and age difference.
+
+        This weight serves two roles:
+        - Sampling probability: normalised across all candidates to select contacts
+        - Tie strength: used directly as contact_strength in ContactNetwork,
+          reflecting how strongly two agents interact
+
+        Parameters
+        ----------
+        alpha : float
+            Distance sensitivity. Controls the spatial decay rate — the distance
+            at which spatial similarity drops to exp(-1) ≈ 0.37. Should be scaled
+            relative to world size; recommended range is 0.05 to 0.20 * world_size.
+            Values too small relative to world_size produce degenerate networks
+            where most agents have no effective candidates (verified via diagnostic).
+
+        tau : float
+            Attribute similarity sensitivity. Controls the age decay rate — the
+            age difference at which demographic similarity drops to exp(-1) ≈ 0.37.
+            Should be calibrated against the age distribution of the population;
+            for ages drawn from uniform(0, 75), the mean pairwise age difference
+            is ~25 years, making tau=25 a neutral baseline.
+
+        Epidemiological implications
+        ----------------------------
+        - Slower epidemic growth relative to random networks due to local saturation
+        - Higher run-to-run variance: outbreak size is sensitive to the spatial
+          position of initially infected agents
+        - Isolated susceptible pockets may survive the epidemic if no bridge
+          contacts connect them to infected clusters, suppressing the final
+          attack rate
+        - To restore global reachability while preserving homophily structure,
+          a Watts-Strogatz rewiring step can be applied post-construction,
+          randomly redirecting a small fraction of edges (e.g. 5%) to random agents
+
+        Notes
+        -----
+        The number of contacts per agent is drawn from Poisson(average_contacts).
+        If total_weight across all candidates is zero for a given agent (can occur
+        with extreme parameter values), that agent receives no ContactNetwork
+        component and is effectively isolated from network transmission.
+        Network transmission can still occur via SpatialTransmissionSystem.
+        """
+
+        alpha = 0.15 * self.world_size  
+        tau = 35
+
+        # DIAGNOSTIC BLOCK (remove once calibrated) 
+        all_weights = []
+        for entity in self.entity_iDs[:50]:
+            position_i = esper.component_for_entity(entity, Location)
+            age_i = esper.component_for_entity(entity, Demographics).age
+            for other in self.entity_iDs:
+                if other == entity:
+                    continue
+                position_j = esper.component_for_entity(other, Location)
+                age_j = esper.component_for_entity(other, Demographics).age
+                d = math.sqrt((position_i.x - position_j.x)**2 + (position_i.y - position_j.y)**2)
+                a = abs(age_i - age_j)
+                all_weights.append(math.exp(-d / alpha) * math.exp(-a / tau))
+        print(f"[Network diagnostic] alpha={alpha}, tau={tau}")
+        print(f"  mean weight:         {np.mean(all_weights):.4f}")
+        print(f"  median weight:       {np.median(all_weights):.4f}")
+        print(f"  % weights < 0.01:    {np.mean(np.array(all_weights) < 0.01)*100:.1f}%")
+
+        print(f"  % weights < 0.01:    {np.mean(np.array(all_weights) < 0.01)*100:.1f}%")
+
+        # Add this:
+        weights_per_agent = np.array(all_weights).reshape(50, -1)  # 50 agents × 999 candidates
+        effective_contacts = np.mean(np.sum(weights_per_agent > 0.01, axis=1))
+        print(f"  mean effective candidates per agent (w > 0.01): {effective_contacts:.1f} / {len(self.entity_iDs)-1}")
+        # END DIAGNOSTIC 
 
         for entity in self.entity_iDs:
             num_contacts = max(0, int(np.random.poisson(self.average_contacts)))
@@ -202,19 +296,18 @@ class SIREpidemicModel:
                 candidates.append(other)
                 weights.append(similarity_ij)
 
-                total_weight = sum(weights)
-                if total_weight == 0:
-                    continue
-
-                probability = [weight / total_weight for weight in weights]
-                contacts = list(np.random.choice(candidates, 
-                                                 size = min(num_contacts, len(candidates)), 
-                                                 replace = False, 
-                                                 p = probability))
-                
-                strengths = [(weights[candidates.index(contact)] / total_weight) for contact in contacts]
-
-                esper.add_component(entity, ContactNetwork(contacts = contacts,
+            total_weight = sum(weights)
+            if total_weight == 0:
+                continue
+            probability = [weight / total_weight for weight in weights]
+            contacts = list(np.random.choice(candidates, 
+                                             size = min(num_contacts, len(candidates)), 
+                                             replace = False, 
+                                             p = probability))
+            
+            #strengths = [(weights[candidates.index(contact)] / total_weight) for contact in contacts]
+            strengths = [weights[candidates.index(c)] for c in contacts]
+            esper.add_component(entity, ContactNetwork(contacts = contacts,
                                                            contact_strength = strengths))
 
     def _degree_constrained_similarity_network(self):
@@ -242,7 +335,8 @@ class SIREpidemicModel:
                 esper.add_component(entity, Infected(
                     viral_load = np.random.uniform(700, 1000),
                     days_infected = 1,
-                    infectious = True))
+                    infectious = True,
+                    recovery_time = max(1, int(random.normalvariate(12, 4)))))
                 
     def step(self):
         """
