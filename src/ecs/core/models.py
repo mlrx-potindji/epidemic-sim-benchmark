@@ -7,6 +7,9 @@ import esper
 import copy
 import math
 
+# --------------------------------------------------
+# Entity class
+# --------------------------------------------------
 class Entity:
     """
     Represents an individual in the simulation with a unique ID.
@@ -34,6 +37,10 @@ class Entity:
 
     def get_iDs(self):
         return self._id_entities.copy()
+
+# --------------------------------------------------
+# Model class
+# --------------------------------------------------
 
 class SIREpidemicModel:
     def __init__(self, seed: int, n_agents: int = 500, world_size: int = 100, 
@@ -114,6 +121,10 @@ class SIREpidemicModel:
 
         self.spatial_location_series_data: defaultdict[str, List[tuple[int, float, float]]] = defaultdict(list) # Initialize spatial location series data storage
 
+    # --------------------------------------------------
+    # Population initialization method
+    # --------------------------------------------------
+
     def _population_components(self):
         """
         Assigns components to each entity in the population, 
@@ -142,6 +153,9 @@ class SIREpidemicModel:
                 immunity = np.random.uniform(0, 0.05)
             ))
 
+    # --------------------------------------------------
+    # Contact network creation methods
+    # --------------------------------------------------
 
     def _create_social_network(self):
         """
@@ -170,6 +184,11 @@ class SIREpidemicModel:
 
                 esper.add_component(entity, ContactNetwork(contacts = contacts, 
                                                            contact_strength = strengths))
+    
+    # --------------------------------------------------
+    # Contact network creation methods based on spatial and attribute similarity
+    # --------------------------------------------------
+
     def _space_attribute_similatirty_network(self):
         """
         Constructs a weighted contact network where tie formation is jointly governed
@@ -316,6 +335,10 @@ class SIREpidemicModel:
     def _multidim_homophily_network(self):
         pass
 
+    # --------------------------------------------------
+    # Initial infection method
+    # --------------------------------------------------
+
     def _initial_infection(self):
         """
         Infects a specified number of entities at the start of the simulation by changing their status from Susceptible to Infected.
@@ -337,7 +360,11 @@ class SIREpidemicModel:
                     days_infected = 1,
                     infectious = True,
                     recovery_time = max(1, int(random.normalvariate(12, 4)))))
-                
+
+    # --------------------------------------------------
+    # Simulation step method
+    # --------------------------------------------------
+      
     def step(self):
         """
         Advances the simulation by one step, processing all systems in the world.
@@ -354,6 +381,10 @@ class SIREpidemicModel:
         self._collect_data()  # Collect data after processing systems
         self.get_spatial_data()  # Collect spatial data after processing systems
         self.step_count += 1 # Increment the step count after processing systems and collecting data
+
+    # --------------------------------------------------
+    # Data collection methods
+    # --------------------------------------------------
 
     def _collect_data(self):
         """
@@ -379,6 +410,10 @@ class SIREpidemicModel:
 
         return self.time_series_data
 
+    # --------------------------------------------------
+    # model run method
+    # --------------------------------------------------
+
     def run(self, max_steps: int):  
         """
         Runs the simulation for a specified number of steps, collecting data at each step.
@@ -399,6 +434,10 @@ class SIREpidemicModel:
             if n_infected == 0:
                 print(f"Simulation ended at step {self.step_count} - no more infected entities.")
                 break
+    
+    # --------------------------------------------------
+    # Spatial data collection method
+    # --------------------------------------------------
 
     def get_spatial_data(self):
         """
@@ -427,6 +466,10 @@ class SIREpidemicModel:
 
         return self.spatial_location_series_data
     
+    # --------------------------------------------------
+    # Model clean up method
+    # --------------------------------------------------
+
     def clean_up(self):
         """
         Cleans up the world by removing all entities and their components, resetting the simulation state.
