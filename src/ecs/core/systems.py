@@ -3,6 +3,10 @@ import esper
 import random
 from .components import *
 
+# --------------------------------------------------
+# MovementSystem
+# --------------------------------------------------
+
 class MovementSystem(esper.Processor):
     """Entities move based on their mobility"""
 
@@ -24,6 +28,10 @@ class MovementSystem(esper.Processor):
             # Update location
             location.x = max(0, min(self.width, location.x + dx))
             location.y = max(0, min(self.height, location.y + dy))
+
+# --------------------------------------------------
+# SpatialTransmissionSystem
+# --------------------------------------------------
 
 class SpatialTransmissionSystem(esper.Processor):
     """Infectious entities can transmit to nearby susceptible entities"""
@@ -105,6 +113,10 @@ class SpatialTransmissionSystemNew(esper.Processor):
         else:
             esper.add_component(entity_id, InfectionHazard(hazard=hazard))
 
+# --------------------------------------------------
+# NetworkTransmissionSystem
+# --------------------------------------------------
+
 class NetworkTransmissionSystem(esper.Processor):
     """Infectious entities can transmit to connected susceptible entities"""
 
@@ -182,6 +194,10 @@ class NetworkTransmissionSystemNew(esper.Processor):
         else:
             esper.add_component(entity_id, InfectionHazard(hazard=hazard))
 
+# --------------------------------------------------
+# InfectionResolutionSystem
+# --------------------------------------------------
+
 class InfectionResolutionSystem(esper.Processor):
     def __init__(self, dt: float = 1.0):
         super().__init__()
@@ -205,6 +221,10 @@ class InfectionResolutionSystem(esper.Processor):
             # Remove the hazard component after processing
             if esper.has_component(entity, InfectionHazard):
                 esper.remove_component(entity, InfectionHazard)
+
+# --------------------------------------------------
+# DiseaseProgressionSystem
+# --------------------------------------------------
 
 class DiseaseProgressionSystem(esper.Processor):
     """Infected entities progress through disease stages"""
@@ -244,6 +264,10 @@ class DiseaseProgressionSystem(esper.Processor):
                         demo = esper.component_for_entity(entity, Demographics)
                         demo.mobility = quarantine.original_mobility
                     esper.remove_component(entity, Quarantined)   
+
+# --------------------------------------------------
+# QuarantineSystem
+# --------------------------------------------------
 
 class QuarantineSystem(esper.Processor):
     """Reduce mobility and transmission for quarantined entities"""
