@@ -43,13 +43,13 @@ class Entity:
 # --------------------------------------------------
 
 class SIREpidemicModel:
-    def __init__(self, seed: int, n_agents: int = 500, world_size: int = 100, 
-                 initial_infected: int = 5, average_contacts: int = 10, 
-                 beta_spatial: float = 0.05, beta_network: float = 0.1,
-                 enable_quarantine: bool = False, 
-                 transmission_radius: float = 4.0, world_name: str = "default_world",
-                 spatial_new: Optional[bool] = False, network_new: Optional[bool] = False,
-                 space_attribute_similarity: Optional[bool] = False,  dt: float = 1.0):
+    def __init__(self, seed: int, tau: float = 25, alpha = None, n_agents: int = 500, 
+                 world_size: int = 100, initial_infected: int = 5, average_contacts: int = 10, 
+                 beta_spatial: float = 0.10, beta_network: float = 0.20,
+                 enable_quarantine: bool = False, transmission_radius: float = 4.0, 
+                 world_name: str = "default_world", spatial_new: Optional[bool] = False, 
+                 network_new: Optional[bool] = False, space_attribute_similarity: Optional[bool] = False,  
+                 dt: float = 1.0, dispersion: float = 0.5):
 
     # Initialize model parameters
         self.n_agents = n_agents
@@ -63,6 +63,10 @@ class SIREpidemicModel:
         self.seed = seed
         self.transmission_radius = transmission_radius
         self.dt = dt
+
+        self.alpha = alpha if alpha is not None else 0.10 * world_size
+        self.tau = tau
+        self.dispersion = dispersion
         
         # Switch to world if not provided
         self.world_name = world_name
@@ -113,7 +117,15 @@ class SIREpidemicModel:
         self._initial_infection() # Infect initial entities at the start of the simulation
 
         if space_attribute_similarity:
-            self._space_attribute_similatirty_network() # Create contact network based on spatial and attribute similarity
+            self._space_attribute_similarity_network(alpha = self.alpha,
+                                                      tau = self.tau,
+                                                      dispersion = dispersion,
+                                                      diagnostic = True) # Create contact network based on spatial and attribute similarity
+            esper.add_processor(NetworkRewiringystem(entity_iDs = self.entity_iDs,
+                                                     average_contacts = self.average_contacts,
+                                                     alpha = self.alpha,
+                                                     tau = self.tau,
+                                                     diagnostic = True), priority = 95)
         else:
             self._create_social_network() # Create contact network based on Poisson distribution of average contacts
         
@@ -189,7 +201,8 @@ class SIREpidemicModel:
     # Contact network creation methods based on spatial and attribute similarity
     # --------------------------------------------------
 
-    def _space_attribute_similatirty_network(self):
+    def _space_attribute_similarity_network(self, alpha: float, tau: float, 
+                                            dispersion: float, diagnostic: Optional[bool]):
         """
         Constructs a weighted contact network where tie formation is jointly governed
         by spatial proximity and age-based attribute similarity (homophily).
@@ -261,38 +274,15 @@ class SIREpidemicModel:
         Network transmission can still occur via SpatialTransmissionSystem.
         """
 
-        alpha = 0.15 * self.world_size  
-        tau = 35
-
-        # DIAGNOSTIC BLOCK (remove once calibrated) 
-        all_weights = []
-        for entity in self.entity_iDs[:50]:
-            position_i = esper.component_for_entity(entity, Location)
-            age_i = esper.component_for_entity(entity, Demographics).age
-            for other in self.entity_iDs:
-                if other == entity:
-                    continue
-                position_j = esper.component_for_entity(other, Location)
-                age_j = esper.component_for_entity(other, Demographics).age
-                d = math.sqrt((position_i.x - position_j.x)**2 + (position_i.y - position_j.y)**2)
-                a = abs(age_i - age_j)
-                all_weights.append(math.exp(-d / alpha) * math.exp(-a / tau))
-        print(f"[Network diagnostic] alpha={alpha}, tau={tau}")
-        print(f"  mean weight:         {np.mean(all_weights):.4f}")
-        print(f"  median weight:       {np.median(all_weights):.4f}")
-        print(f"  % weights < 0.01:    {np.mean(np.array(all_weights) < 0.01)*100:.1f}%")
-
-        print(f"  % weights < 0.01:    {np.mean(np.array(all_weights) < 0.01)*100:.1f}%")
-
-        # Add this:
-        weights_per_agent = np.array(all_weights).reshape(50, -1)  # 50 agents × 999 candidates
-        effective_contacts = np.mean(np.sum(weights_per_agent > 0.01, axis=1))
-        print(f"  mean effective candidates per agent (w > 0.01): {effective_contacts:.1f} / {len(self.entity_iDs)-1}")
-        # END DIAGNOSTIC 
+        alpha = alpha if alpha is not None else 0.10 * self.world_size
+        tau = tau if tau is not None else 25
+        dispersion = dispersion
 
         for entity in self.entity_iDs:
-            num_contacts = max(0, int(np.random.poisson(self.average_contacts)))
-
+            #num_contacts = max(0, int(np.random.poisson(self.average_contacts)))
+            
+            # dispersion parameter
+            num_contacts = max(0, int(np.random.negative_binomial(dispersion, dispersion / (dispersion + self.average_contacts))))
             if num_contacts == 0:
                 continue
 
@@ -310,7 +300,7 @@ class SIREpidemicModel:
                 distance_ij = math.sqrt((position_i.x - position_j.x) ** 2 + (position_i.y - position_j.y) ** 2)
                 attribute_simlarity_ij = abs(demographics_i - demographics_j)
 
-                similarity_ij = math.exp(-distance_ij / alpha) * math.exp(-attribute_simlarity_ij / tau)
+                similarity_ij = math.exp(-distance_ij / self.alpha) * math.exp(-attribute_simlarity_ij / self.tau)
 
                 candidates.append(other)
                 weights.append(similarity_ij)
@@ -328,6 +318,32 @@ class SIREpidemicModel:
             strengths = [weights[candidates.index(c)] for c in contacts]
             esper.add_component(entity, ContactNetwork(contacts = contacts,
                                                            contact_strength = strengths))
+        # ── DIAGNOSTIC ────────────────────────────────────────────────────────
+        if diagnostic: 
+            all_weights = []
+            for entity in self.entity_iDs[:50]:
+                position_i = esper.component_for_entity(entity, Location)
+                age_i = esper.component_for_entity(entity, Demographics).age
+                for other in self.entity_iDs:
+                    if other == entity:
+                        continue
+                    position_j = esper.component_for_entity(other, Location)
+                    age_j = esper.component_for_entity(other, Demographics).age
+                    d = math.sqrt((position_i.x - position_j.x)**2 + (position_i.y - position_j.y)**2)
+                    a = abs(age_i - age_j)
+                    all_weights.append(math.exp(-d / alpha) * math.exp(-a / tau))
+            print(f"[Network diagnostic] alpha={alpha}, tau={tau}")
+            print(f"  mean weight:         {np.mean(all_weights):.4f}")
+            print(f"  median weight:       {np.median(all_weights):.4f}")
+            print(f"  % weights < 0.01:    {np.mean(np.array(all_weights) < 0.01)*100:.1f}%")
+
+            print(f"  % weights < 0.01:    {np.mean(np.array(all_weights) < 0.01)*100:.1f}%")
+
+            # Add this:
+            weights_per_agent = np.array(all_weights).reshape(50, -1)  # 50 agents × 999 candidates
+            effective_contacts = np.mean(np.sum(weights_per_agent > 0.01, axis=1))
+            print(f"  mean effective candidates per agent (w > 0.01): {effective_contacts:.1f} / {len(self.entity_iDs)-1}")
+            
 
     def _degree_constrained_similarity_network(self):
         pass

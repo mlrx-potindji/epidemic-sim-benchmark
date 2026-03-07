@@ -1,6 +1,7 @@
 import math
 import esper
 import random
+import numpy as np
 from .components import *
 
 # --------------------------------------------------
@@ -194,6 +195,134 @@ class NetworkTransmissionSystemNew(esper.Processor):
         else:
             esper.add_component(entity_id, InfectionHazard(hazard=hazard))
 
+class NetworkRewiringystem(esper.Processor):
+    def __init__(self, entity_iDs: List, average_contacts: int,  
+                 tau: float, alpha: float, diagnostic: bool = False, rewire_every: int = 18):
+        super().__init__()
+
+        self.entity_iDs = entity_iDs
+        self.average_contacts = average_contacts
+        self.tau = tau
+        self.alpha = alpha
+        self.rewire_every = rewire_every
+        self._step = 0
+        self.diagnostic = diagnostic
+
+    def process(self):
+
+        self._step += 1
+        if self._step % self.rewire_every != 0:
+            return
+        
+        for entity in self.entity_iDs:
+            if esper.has_component(entity, Dead):
+                continue
+            # remove older contact
+            if esper.has_component(entity, ContactNetwork):
+                esper.remove_component(entity, ContactNetwork)
+
+            #num_contacts = max(0, int(np.random.poisson(self.average_contacts))) 
+            k = 0.5  # dispersion parameter 
+            num_contacts = max(0, int(np.random.negative_binomial(k, k / (k + self.average_contacts))))
+
+            if num_contacts == 0:
+                continue
+
+            # Fetch current position and age for this entity
+            if not esper.has_component(entity, Location) or \
+               not esper.has_component(entity, Demographics):
+                continue
+
+            position_i = esper.component_for_entity(entity, Location)
+            age_i = esper.component_for_entity(entity, Demographics).age
+
+            candidates = []
+            weights = []
+
+            for other in self.entity_iDs:
+                if other == entity:
+                    continue
+                if esper.has_component(other, Dead):
+                    continue  # exclude dead agents as contacts
+                if not esper.has_component(other, Location) or \
+                   not esper.has_component(other, Demographics):
+                    continue
+
+                position_j = esper.component_for_entity(other, Location)
+                age_j = esper.component_for_entity(other, Demographics).age
+
+                # Current positions — not frozen initial ones
+                distance_ij = math.sqrt(
+                    (position_i.x - position_j.x) ** 2 +
+                    (position_i.y - position_j.y) ** 2
+                )
+                age_diff_ij = abs(age_i - age_j)
+
+                similarity_ij = (math.exp(-distance_ij / self.alpha) *
+                                 math.exp(-age_diff_ij / self.tau))
+
+                candidates.append(other)
+                weights.append(similarity_ij)
+
+            total_weight = sum(weights)
+            if total_weight == 0:
+                continue
+
+            probability = [w / total_weight for w in weights]
+            contacts = list(np.random.choice(
+                candidates,
+                size=min(num_contacts, len(candidates)),
+                replace=False,
+                p=probability
+            ))
+
+            # Raw similarity as tie strength — not normalised by total_weight
+            strengths = [weights[candidates.index(c)] for c in contacts]
+
+            esper.add_component(entity, ContactNetwork(
+                contacts=contacts,
+                contact_strength=strengths
+            ))
+
+        # ── DIAGNOSTIC ────────────────────────────────────────────────────────
+        if self.diagnostic:
+            all_weights = []
+            sample = [e for e in self.entity_iDs
+                      if not esper.has_component(e, Dead)][:50]
+
+            for entity in sample:
+                if not esper.has_component(entity, Location) or \
+                   not esper.has_component(entity, Demographics):
+                    continue
+                position_i = esper.component_for_entity(entity, Location)
+                age_i = esper.component_for_entity(entity, Demographics).age
+                for other in self.entity_iDs:
+                    if other == entity or esper.has_component(other, Dead):
+                        continue
+                    if not esper.has_component(other, Location) or \
+                       not esper.has_component(other, Demographics):
+                        continue
+                    position_j = esper.component_for_entity(other, Location)
+                    age_j = esper.component_for_entity(other, Demographics).age
+                    d = math.sqrt((position_i.x - position_j.x)**2 +
+                                  (position_i.y - position_j.y)**2)
+                    a = abs(age_i - age_j)
+                    all_weights.append(math.exp(-d / self.alpha) *
+                                       math.exp(-a / self.tau))
+
+            all_weights_arr = np.array(all_weights)
+            weights_per_agent = all_weights_arr.reshape(len(sample), -1)
+            effective_candidates = np.mean(np.sum(weights_per_agent > 0.01, axis=1))
+            n_alive = sum(1 for e in self.entity_iDs
+                          if not esper.has_component(e, Dead))
+
+            print(f"[Rewire diagnostic] step={self._step} | alpha={self.alpha:.1f}, tau={self.tau}")
+            print(f"  live agents:               {n_alive} / {len(self.entity_iDs)}")
+            print(f"  mean weight:               {np.mean(all_weights_arr):.4f}")
+            print(f"  median weight:             {np.median(all_weights_arr):.4f}")
+            print(f"  % weights < 0.01:          {np.mean(all_weights_arr < 0.01)*100:.1f}%")
+            print(f"  mean effective candidates: {effective_candidates:.1f} / {n_alive - 1}")
+
 # --------------------------------------------------
 # InfectionResolutionSystem
 # --------------------------------------------------
@@ -245,7 +374,7 @@ class DiseaseProgressionSystem(esper.Processor):
             #   and draw from that probability to determine if the entity dies during the infectious period
             #   which would then also impact quarantine end logic in the QuarantineSystem.
             if infected.days_infected >= infected.recovery_time:
-                if random.random() < random.uniform(0.80, 0.98):  
+                if random.random() < random.uniform(0.95, 0.995):  
                     esper.remove_component(entity, Infected)
                     esper.add_component(entity, Recovered(immunity=0.9))  # Recovered with some immunity
                 else:
