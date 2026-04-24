@@ -49,7 +49,7 @@ class SIREpidemicModel:
                  enable_quarantine: bool = False, transmission_radius: float = 4.0, 
                  world_name: str = "default_world", spatial_new: Optional[bool] = False, 
                  network_new: Optional[bool] = False, space_attribute_similarity: Optional[bool] = False,  
-                 dt: float = 1.0, dispersion: float = 0.5):
+                 dt: float = 1.0, dispersion: float = 0.7):
 
     # Initialize model parameters
         self.n_agents = n_agents
@@ -64,7 +64,7 @@ class SIREpidemicModel:
         self.transmission_radius = transmission_radius
         self.dt = dt
 
-        self.alpha = alpha if alpha is not None else 0.10 * world_size
+        self.alpha = alpha if alpha is not None else 0.20 * world_size
         self.tau = tau
         self.dispersion = dispersion
         
@@ -114,6 +114,8 @@ class SIREpidemicModel:
 
         self._population_components() # assign components to each entity in the population
 
+        self.seed_locations: List[tuple[float, float]] = []
+
         self._initial_infection() # Infect initial entities at the start of the simulation
 
         if space_attribute_similarity:
@@ -158,7 +160,7 @@ class SIREpidemicModel:
 
             esper.add_component(entity, Demographics(
                 age = np.random.randint(0, 75),
-                mobility = np.random.uniform(0.5, 9.0)
+                mobility = np.random.uniform(0.5, 20.0)
             ))
 
             esper.add_component(entity, Susceptible(
@@ -367,8 +369,10 @@ class SIREpidemicModel:
         """
         
         entities_to_infect = random.sample(self.entity_iDs, min(self.initial_infected, len(self.entity_iDs)))
+        
 
         for entity in entities_to_infect:
+            
             if esper.has_component(entity, Susceptible):
                 esper.remove_component(entity, Susceptible)
                 esper.add_component(entity, Infected(
@@ -376,6 +380,10 @@ class SIREpidemicModel:
                     days_infected = 1,
                     infectious = True,
                     recovery_time = max(1, int(random.normalvariate(12, 4)))))
+                
+                if esper.has_component(entity, Location):
+                    loc = esper.component_for_entity(entity, Location)
+                    self.seed_locations.append((loc.x, loc.y))
 
     # --------------------------------------------------
     # Simulation step method

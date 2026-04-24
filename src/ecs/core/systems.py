@@ -374,7 +374,7 @@ class DiseaseProgressionSystem(esper.Processor):
             #   and draw from that probability to determine if the entity dies during the infectious period
             #   which would then also impact quarantine end logic in the QuarantineSystem.
             if infected.days_infected >= infected.recovery_time:
-                if random.random() < random.uniform(0.95, 0.995):  
+                if random.random() < random.uniform(0.97, 0.995):  
                     esper.remove_component(entity, Infected)
                     esper.add_component(entity, Recovered(immunity=0.9))  # Recovered with some immunity
                 else:
