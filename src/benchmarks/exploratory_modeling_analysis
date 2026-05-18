@@ -8,17 +8,17 @@ import numpy as np
 def run_ecs_epidemic(
         transmission_rate_spatial, transmission_rate_network,
         transmission_radius, average_contacts, seed,
-        enable_quarantine):
+        enable_quarantine, initial_infected):
 
     world_name = f"world_{seed}"
 
-    model = SIREpidemicModel(n_agents = 500, world_size = 500, initial_infected = 10,
+    model = SIREpidemicModel(n_agents = 1000, world_size = 500, 
                              seed = seed,
-                             spatial_new = False, network_new = False,
-                             space_attribute_similarity = False, enable_quarantine = enable_quarantine,
+                             spatial_new = True, network_new = True,
+                             space_attribute_similarity = True, enable_quarantine = enable_quarantine,
                              beta_network=transmission_rate_network, beta_spatial=transmission_rate_spatial,
                              transmission_radius=transmission_radius, average_contacts=average_contacts,
-                             world_name=world_name, recovery_time=12)
+                             world_name=world_name, initial_infected = initial_infected,)
     
     model.run(max_steps=400)
     data = model._collect_data()
@@ -41,6 +41,7 @@ ecs_model.uncertainties = [
     RealParameter("transmission_rate_spatial", 0.01, 0.1),
     RealParameter("transmission_rate_network", 0.05, 0.2),  
     RealParameter("transmission_radius", 1, 10),
+    IntegerParameter("initial_infected", 10, 45),
     IntegerParameter("average_contacts", 1, 20),
     IntegerParameter("seed", 1, 1000)
 ]
