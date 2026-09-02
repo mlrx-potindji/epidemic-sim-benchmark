@@ -196,6 +196,7 @@ class SIREpidemicModel:
 
             if num_contacts > 0:
                 possible_contacts = [x for x in self.entity_iDs if x != entity] 
+                num_contacts = min(num_contacts, len(possible_contacts))
                 contacts = self.rng.python.sample(possible_contacts, num_contacts)
 
                 strengths = [self.rng.python.uniform(0.1, 1.0) for _ in range(num_contacts)]

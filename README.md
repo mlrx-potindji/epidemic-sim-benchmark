@@ -17,16 +17,16 @@ with a Mesa agent-based implementation.
 
 ## Running
 
-Install the project with Poetry, then run the ECS benchmark with:
+Install the project with uv, then run the ECS benchmark with:
 
 ```bash
-poetry run python scripts/run_ecs.py
+uv run python scripts/run_ecs.py
 ```
 
 The synthetic-data script expects its source CSV files under `data/raw`:
 
 ```bash
-poetry run python scripts/generate_data.py
+uv run python scripts/generate_data.py
 ```
 
 The synthetic-data workflow additionally requires SDV, which is kept outside

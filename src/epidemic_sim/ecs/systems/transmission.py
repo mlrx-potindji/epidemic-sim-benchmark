@@ -164,9 +164,10 @@ class NetworkTransmissionSystem(esper.Processor):
                         ))
 
 class NetworkTransmissionSystemNew(esper.Processor):
-    def __init__(self, base_transmission_prob: float):
+    def __init__(self, base_transmission_prob: float, rng: RandomStreams):
         super().__init__()
         self.base_prob = base_transmission_prob
+        self.rng = rng
     
     def process(self):
 

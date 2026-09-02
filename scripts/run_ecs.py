@@ -1,6 +1,5 @@
 from epidemic_sim.analysis.plotting import (
     plot_epidemic_curves,
-    plot_epidemic_rings,
     plot_spatial_3d_wave,
     plot_spatial_heatmap,
     plot_spatial_snapshot,
@@ -25,10 +24,6 @@ def main():
     plot_spatial_3d_wave(model.spatial_location_series_data,
                          save_path="wave_composite.gif", world_size=500,
                          compartment=None)
-    plot_epidemic_rings(spatial_location_series,
-                        seed_locations=model.seed_locations,
-                        world_size=model.world_size,
-                        save_path="epidemic_ring_plot.png")
 
 
 if __name__ == "__main__":
