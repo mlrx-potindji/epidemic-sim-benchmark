@@ -1,4 +1,3 @@
-from ecs.core.models import SIREpidemicModel
 from matplotlib.animation import FuncAnimation
 import matplotlib.pyplot as plt
 import numpy as np
@@ -7,18 +6,6 @@ from scipy.ndimage import gaussian_filter
 from collections import defaultdict
 from mpl_toolkits.mplot3d import Axes3D
 from matplotlib import cm
-
-model = SIREpidemicModel(seed = 28022026, enable_quarantine = False,
-                         initial_infected = 20, world_size= 500,
-                         beta_spatial = 0.3, beta_network = 0.25,
-                         spatial_new = True, network_new = True,
-                         space_attribute_similarity = True, n_agents = 1000, dt = 1.0,
-                         dispersion = 0.65) 
-
-model.run(max_steps=400)
-
-time_series = model._collect_data()
-spatial_location_series = model.get_spatial_data()
 
 #print(time_series.items())
 
@@ -210,6 +197,7 @@ def plot_spatial_heatmap(spatial_location_series, time_step=None, save_path=None
         return rgba
 
     # ── Legend handles — fixed, shown once
+    legend_handles = [
         plt.Line2D([0], [0], marker='o', color='w',
                    markerfacecolor=colour, markersize=10, label=comp.capitalize())
         for comp, colour in compartment_colours.items()
@@ -587,18 +575,3 @@ def plot_epidemic_rings(spatial_location_series, seed_locations: list,
         plt.close(fig)
     else:
         plt.show()
-
-if __name__ == "__main__":
-    plot_epidemic_curves(time_series, save_path="epidemic_curves.png")
-    plot_spatial_snapshot(spatial_location_series, save_path="spatial_animation.gif")
-    plot_spatial_heatmap(model.spatial_location_series_data, save_path="spatial_heatmap.gif")
-    plot_spatial_3d_wave(model.spatial_location_series_data,
-                     save_path="wave_composite.gif",
-                     world_size=500,
-                     compartment=None)
-    plot_epidemic_rings(spatial_location_series,
-                    seed_locations=model.seed_locations,
-                    world_size=model.world_size,
-                    save_path="epidemic_ring_plot.png")
-    
-    

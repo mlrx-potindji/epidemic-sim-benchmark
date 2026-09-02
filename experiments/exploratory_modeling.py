@@ -1,4 +1,4 @@
-from ecs.core.models import SIREpidemicModel
+from epidemic_sim.ecs.simulation import SIREpidemicModel
 from ema_workbench import BooleanParameter, CategoricalParameter, Model, RealParameter, ScalarOutcome, IntegerParameter, TimeSeriesOutcome, perform_experiments, Samplers
 from ema_workbench.analysis import pairs_plotting
 from ema_workbench.analysis.plotting import lines

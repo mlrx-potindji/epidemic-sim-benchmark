@@ -9,13 +9,16 @@ requires-python = ">=3.12"
 dependencies = [
     "mesa (>=3.5.0,<4.0.0)",
     "esper (>=3.7,<4.0)",
+    "numpy (>=2.0.0,<3.0.0)",
+    "scipy (>=1.14.0,<2.0.0)",
+    "pandas (>=2.0.0,<3.0.0)",
     "matplotlib (>=3.10.8,<4.0.0)",
     "ema-workbench (>=2.5.3,<3.0.0)"
 ]
 
 [tool.poetry]
 packages = [
-    { include = "ecs", from = "src" }
+    { include = "epidemic_sim", from = "src" }
 ]
 
 [build-system]

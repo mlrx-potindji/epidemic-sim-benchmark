@@ -1,11 +1,11 @@
 from collections import defaultdict
-from .systems import *
+from .systems.transmission import *
 from typing import List, Optional
 import numpy as np
 import esper
 import math
 import uuid
-from .randomness import RandomStreams
+from ..randomness import RandomStreams
 
 # --------------------------------------------------
 # Entity class

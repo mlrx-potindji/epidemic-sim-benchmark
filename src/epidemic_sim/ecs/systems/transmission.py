@@ -2,8 +2,8 @@ import math
 import esper
 import random
 import numpy as np
-from .components import *
-from .randomness import RandomStreams
+from ..components import *
+from ...randomness import RandomStreams
 
 # --------------------------------------------------
 # MovementSystem
