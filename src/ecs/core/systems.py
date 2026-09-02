@@ -3,6 +3,7 @@ import esper
 import random
 import numpy as np
 from .components import *
+from .randomness import RandomStreams
 
 # --------------------------------------------------
 # MovementSystem
@@ -11,11 +12,12 @@ from .components import *
 class MovementSystem(esper.Processor):
     """Entities move based on their mobility"""
 
-    def __init__(self, world_width: float, world_height: float):
+    def __init__(self, world_width: float, world_height: float, rng: RandomStreams):
         super().__init__()
         # The world dimensions are needed to ensure entities stay within bounds
         self.width = world_width
         self.height = world_height
+        self.rng = rng
         
     def process(self):
 
@@ -23,8 +25,8 @@ class MovementSystem(esper.Processor):
         for entity, (location, demographics) in esper.get_components(Location, Demographics):
             # Random walk based on mobility
             mobility = demographics.mobility
-            dx = random.uniform(-mobility, mobility)
-            dy = random.uniform(-mobility, mobility)
+            dx = self.rng.python.uniform(-mobility, mobility)
+            dy = self.rng.python.uniform(-mobility, mobility)
 
             # Update location
             location.x = max(0, min(self.width, location.x + dx))
@@ -37,10 +39,11 @@ class MovementSystem(esper.Processor):
 class SpatialTransmissionSystem(esper.Processor):
     """Infectious entities can transmit to nearby susceptible entities"""
 
-    def __init__(self, transmission_radius: float, base_transmission_prob: float):
+    def __init__(self, transmission_radius: float, base_transmission_prob: float, rng: RandomStreams):
         super().__init__()
         self.transmission_radius = transmission_radius
         self.base_prob = base_transmission_prob
+        self.rng = rng
 
     def process(self):
         # Get all infected and susceptible entities
@@ -65,22 +68,23 @@ class SpatialTransmissionSystem(esper.Processor):
                     prob = (self.base_prob * inf_status.viral_load / 1000) * (1 - sus_status.immunity) 
 
                     # Attempt transmission
-                    if random.random() < prob:
+                    if self.rng.python.random() < prob:
                         if esper.has_component(sus_entity, Susceptible):
                         # Infect the susceptible entity
                             esper.remove_component(sus_entity, Susceptible)
                             esper.add_component(sus_entity, Infected(
-                                viral_load=random.uniform(500, 1000), 
+                                viral_load=self.rng.python.uniform(500, 1000),
                                 days_infected=0,
                                 infectious=True,
-                                recovery_time = max(1, int(random.normalvariate(12, 4))) # Recovery time drawn from normal distribution with mean 12 days and std dev 4 days, minimum of 1 day
+                                recovery_time = max(1, int(self.rng.python.normalvariate(12, 4))) # Recovery time drawn from normal distribution with mean 12 days and std dev 4 days, minimum of 1 day
                             ))
 
 class SpatialTransmissionSystemNew(esper.Processor):
-    def __init__(self, transmission_radius: float, base_transmission_prob: float):
+    def __init__(self, transmission_radius: float, base_transmission_prob: float, rng: RandomStreams):
         super().__init__()
         self.transmission_radius = transmission_radius
         self.base_prob = base_transmission_prob
+        self.rng = rng
 
     def process(self):
         infected_entities = [
@@ -121,9 +125,10 @@ class SpatialTransmissionSystemNew(esper.Processor):
 class NetworkTransmissionSystem(esper.Processor):
     """Infectious entities can transmit to connected susceptible entities"""
 
-    def __init__(self, base_transmission_prob: float):
+    def __init__(self, base_transmission_prob: float, rng: RandomStreams):
         super().__init__()
         self.base_prob = base_transmission_prob
+        self.rng = rng
 
     def process(self):
         # Get all infected and susceptible entities
@@ -148,14 +153,14 @@ class NetworkTransmissionSystem(esper.Processor):
                     sus_status = esper.component_for_entity(contact_iD, Susceptible)
                     prob = adjusted_prob * strength * (1 - sus_status.immunity) * inf_status.viral_load / 1000
 
-                    if random.random() < prob:
+                    if self.rng.python.random() < prob:
                         # Infect the susceptible entity
                         esper.remove_component(contact_iD, Susceptible)
                         esper.add_component(contact_iD, Infected(
-                            viral_load=random.uniform(500, 1000), 
+                                viral_load=self.rng.python.uniform(500, 1000),
                             days_infected=0,
                             infectious=True,
-                            recovery_time = max(1, int(random.normalvariate(12, 4))) # Recovery time drawn from normal distribution with mean 12 days and std dev 4 days, minimum of 1 day
+                                recovery_time = max(1, int(self.rng.python.normalvariate(12, 4))) # Recovery time drawn from normal distribution with mean 12 days and std dev 4 days, minimum of 1 day
                         ))
 
 class NetworkTransmissionSystemNew(esper.Processor):
@@ -197,7 +202,8 @@ class NetworkTransmissionSystemNew(esper.Processor):
 
 class NetworkRewiringystem(esper.Processor):
     def __init__(self, entity_iDs: List, average_contacts: int,  
-                 tau: float, alpha: float, diagnostic: bool = False, rewire_every: int = 18):
+                 tau: float, alpha: float, diagnostic: bool = False, rewire_every: int = 18,
+                 rng: RandomStreams | None = None):
         super().__init__()
 
         self.entity_iDs = entity_iDs
@@ -207,6 +213,7 @@ class NetworkRewiringystem(esper.Processor):
         self.rewire_every = rewire_every
         self._step = 0
         self.diagnostic = diagnostic
+        self.rng = rng or RandomStreams.from_seed(None)
 
     def process(self):
 
@@ -223,7 +230,7 @@ class NetworkRewiringystem(esper.Processor):
 
             #num_contacts = max(0, int(np.random.poisson(self.average_contacts))) 
             k = 0.5  # dispersion parameter 
-            num_contacts = max(0, int(np.random.negative_binomial(k, k / (k + self.average_contacts))))
+            num_contacts = max(0, int(self.rng.numpy.negative_binomial(k, k / (k + self.average_contacts))))
 
             if num_contacts == 0:
                 continue
@@ -269,7 +276,7 @@ class NetworkRewiringystem(esper.Processor):
                 continue
 
             probability = [w / total_weight for w in weights]
-            contacts = list(np.random.choice(
+            contacts = list(self.rng.numpy.choice(
                 candidates,
                 size=min(num_contacts, len(candidates)),
                 replace=False,
@@ -328,9 +335,10 @@ class NetworkRewiringystem(esper.Processor):
 # --------------------------------------------------
 
 class InfectionResolutionSystem(esper.Processor):
-    def __init__(self, dt: float = 1.0):
+    def __init__(self, dt: float = 1.0, rng: RandomStreams | None = None):
         super().__init__()
         self.dt = dt
+        self.rng = rng or RandomStreams.from_seed(None)
 
     def process(self):
         to_resolve = list(esper.get_components(Susceptible, InfectionHazard))
@@ -338,13 +346,13 @@ class InfectionResolutionSystem(esper.Processor):
         for entity, (susceptible, hazard) in to_resolve:
             prob = 1 - math.exp(-hazard.hazard * self.dt)  # Convert hazard to probability
 
-            if random.random() < prob:
+            if self.rng.python.random() < prob:
                 esper.remove_component(entity, Susceptible)
                 esper.add_component(entity, Infected(
-                    viral_load = random.uniform(500, 1000), 
+                    viral_load = self.rng.python.uniform(500, 1000),
                     days_infected = 0,
                     infectious = True,
-                    recovery_time = max(1, int(random.normalvariate(12, 4))) #
+                    recovery_time = max(1, int(self.rng.python.normalvariate(12, 4))) #
                 ))
 
             # Remove the hazard component after processing
@@ -358,8 +366,9 @@ class InfectionResolutionSystem(esper.Processor):
 class DiseaseProgressionSystem(esper.Processor):
     """Infected entities progress through disease stages"""
 
-    def __init__(self): # Purposely set to 12 (shorter that quarantine duration)
+    def __init__(self, rng: RandomStreams | None = None): # Purposely set to 12 (shorter that quarantine duration)
         super().__init__()
+        self.rng = rng or RandomStreams.from_seed(None)
 
     def process(self):
         for entity, infected in esper.get_component(Infected):
@@ -374,7 +383,7 @@ class DiseaseProgressionSystem(esper.Processor):
             #   and draw from that probability to determine if the entity dies during the infectious period
             #   which would then also impact quarantine end logic in the QuarantineSystem.
             if infected.days_infected >= infected.recovery_time:
-                if random.random() < random.uniform(0.97, 0.995):  
+                if self.rng.python.random() < self.rng.python.uniform(0.97, 0.995):
                     esper.remove_component(entity, Infected)
                     esper.add_component(entity, Recovered(immunity=0.9))  # Recovered with some immunity
                 else:
@@ -401,15 +410,16 @@ class DiseaseProgressionSystem(esper.Processor):
 class QuarantineSystem(esper.Processor):
     """Reduce mobility and transmission for quarantined entities"""
 
-    def __init__(self, quarantine_compliance: float):
+    def __init__(self, quarantine_compliance: float, rng: RandomStreams | None = None):
         super().__init__()
         self.compliance = quarantine_compliance
+        self.rng = rng or RandomStreams.from_seed(None)
 
     def process(self):
         for entity, (infected, demographics) in esper.get_components(Infected, Demographics):
             if infected.infectious and not esper.has_component(entity, Quarantined):
                 # Quarantine infectious entities with some compliance level
-                if random.random() < self.compliance:
+                if self.rng.python.random() < self.compliance:
                     esper.add_component(entity, Quarantined(
                         start_day = infected.days_infected,
                         compliance_level = self.compliance,

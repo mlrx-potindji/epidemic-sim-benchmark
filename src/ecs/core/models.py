@@ -1,11 +1,11 @@
 from collections import defaultdict
 from .systems import *
-import random
 from typing import List, Optional
 import numpy as np
 import esper
-import copy
 import math
+import uuid
+from .randomness import RandomStreams
 
 # --------------------------------------------------
 # Entity class
@@ -47,11 +47,15 @@ class SIREpidemicModel:
                  world_size: int = 100, initial_infected: int = 5, average_contacts: int = 10, 
                  beta_spatial: float = 0.10, beta_network: float = 0.20,
                  enable_quarantine: bool = False, transmission_radius: float = 4.0, 
-                 world_name: str = "default_world", spatial_new: Optional[bool] = False, 
+                 world_name: Optional[str] = None, spatial_new: Optional[bool] = False,
                  network_new: Optional[bool] = False, space_attribute_similarity: Optional[bool] = False,  
                  dt: float = 1.0, dispersion: float = 0.7):
 
     # Initialize model parameters
+        self._validate_parameters(seed, tau, alpha, n_agents, world_size,
+                                  initial_infected, average_contacts,
+                                  beta_spatial, beta_network,
+                                  transmission_radius, dt, dispersion)
         self.n_agents = n_agents
         self.world_size = world_size
         self.initial_infected = initial_infected
@@ -67,46 +71,14 @@ class SIREpidemicModel:
         self.alpha = alpha if alpha is not None else 0.20 * world_size
         self.tau = tau
         self.dispersion = dispersion
+        self._uses_similarity_network = bool(space_attribute_similarity)
         
-        # Switch to world if not provided
-        self.world_name = world_name
-        esper.switch_world(world_name)
+        self.world_name = world_name or f"world_{uuid.uuid4().hex}"
+        esper.switch_world(self.world_name)
 
-        # Set random seed for reproducibility
-        if seed is not None:
-            np.random.seed(seed)
-        else:
-            np.random.seed()
+        self.rng = RandomStreams.from_seed(seed)
 
         self.step_count = 0
-
-        # Register systems
-        esper.add_processor(MovementSystem(world_height = world_size, world_width = world_size), 
-                            priority = 100)
-
-        if spatial_new:
-            esper.add_processor(SpatialTransmissionSystemNew(transmission_radius = transmission_radius, 
-                                                      base_transmission_prob = beta_spatial),
-                                                      priority = 90)
-        else:
-            esper.add_processor(SpatialTransmissionSystem(transmission_radius = transmission_radius, 
-                                                      base_transmission_prob = beta_spatial),
-                                                      priority = 90)
-        if network_new:
-            esper.add_processor(NetworkTransmissionSystemNew(base_transmission_prob = beta_network), 
-                                 priority = 80)
-        else:
-            esper.add_processor(NetworkTransmissionSystem(base_transmission_prob = beta_network), 
-                                 priority = 80)
-            
-        if spatial_new and network_new:
-            esper.add_processor(InfectionResolutionSystem(dt = self.dt), priority = 70)
-
-        esper.add_processor(DiseaseProgressionSystem(), priority = 60)
-
-        if enable_quarantine:
-            # Example quarantine compliance level, can be adjusted as needed
-            esper.add_processor(QuarantineSystem(quarantine_compliance = 0.8), priority = 60) 
 
         self.entities = Entity(n_agents) # store full Entity object to access both population and IDs
         self.entities.populate() # create the population of entities
@@ -123,17 +95,49 @@ class SIREpidemicModel:
                                                       tau = self.tau,
                                                       dispersion = dispersion,
                                                       diagnostic = True) # Create contact network based on spatial and attribute similarity
-            esper.add_processor(NetworkRewiringystem(entity_iDs = self.entity_iDs,
-                                                     average_contacts = self.average_contacts,
-                                                     alpha = self.alpha,
-                                                     tau = self.tau,
-                                                     diagnostic = True), priority = 95)
         else:
             self._create_social_network() # Create contact network based on Poisson distribution of average contacts
+
+        self._register_systems(spatial_new, network_new, enable_quarantine)
         
         self.time_series_data: defaultdict[str, List[int]] = defaultdict(list) # Initialize time series data storage
 
         self.spatial_location_series_data: defaultdict[str, List[tuple[int, float, float]]] = defaultdict(list) # Initialize spatial location series data storage
+
+    @staticmethod
+    def _validate_parameters(seed, tau, alpha, n_agents, world_size,
+                             initial_infected, average_contacts, beta_spatial,
+                             beta_network, transmission_radius, dt, dispersion):
+        if seed is not None and not isinstance(seed, int):
+            raise TypeError("seed must be an integer or None")
+        if n_agents < 1 or initial_infected < 0 or initial_infected > n_agents:
+            raise ValueError("n_agents must be positive and initial_infected must be in [0, n_agents]")
+        if world_size <= 0 or average_contacts < 0 or transmission_radius < 0 or dt <= 0:
+            raise ValueError("world_size and dt must be positive; contacts and radius cannot be negative")
+        if tau <= 0 or dispersion <= 0:
+            raise ValueError("tau and dispersion must be positive")
+        if alpha is not None and alpha <= 0:
+            raise ValueError("alpha must be positive")
+        if not 0 <= beta_spatial <= 1 or not 0 <= beta_network <= 1:
+            raise ValueError("transmission probabilities must be between 0 and 1")
+
+    def _register_systems(self, spatial_new: bool, network_new: bool,
+                          enable_quarantine: bool):
+        """Install all processors for this model's world in execution order."""
+        esper.add_processor(MovementSystem(self.world_size, self.world_size, self.rng), priority=100)
+        spatial_system = SpatialTransmissionSystemNew if spatial_new else SpatialTransmissionSystem
+        network_system = NetworkTransmissionSystemNew if network_new else NetworkTransmissionSystem
+        esper.add_processor(spatial_system(self.transmission_radius, self.beta_spatial, self.rng), priority=90)
+        esper.add_processor(network_system(self.beta_network, self.rng), priority=80)
+        if spatial_new or network_new:
+            esper.add_processor(InfectionResolutionSystem(self.dt, self.rng), priority=70)
+        esper.add_processor(DiseaseProgressionSystem(self.rng), priority=60)
+        if enable_quarantine:
+            esper.add_processor(QuarantineSystem(0.8, self.rng), priority=60)
+        if hasattr(self, "_uses_similarity_network") and self._uses_similarity_network:
+            esper.add_processor(NetworkRewiringystem(
+                self.entity_iDs, self.average_contacts, self.tau, self.alpha,
+                diagnostic=True, rng=self.rng), priority=95)
 
     # --------------------------------------------------
     # Population initialization method
@@ -154,17 +158,17 @@ class SIREpidemicModel:
 
         for entity in self.entity_iDs:
             esper.add_component(entity, Location(
-                x = np.random.uniform(0, self.world_size),
-                y = np.random.uniform(0, self.world_size)
+                x = self.rng.numpy.uniform(0, self.world_size),
+                y = self.rng.numpy.uniform(0, self.world_size)
             ))
 
             esper.add_component(entity, Demographics(
-                age = np.random.randint(0, 75),
-                mobility = np.random.uniform(0.5, 20.0)
+                age = self.rng.numpy.integers(0, 75),
+                mobility = self.rng.numpy.uniform(0.5, 20.0)
             ))
 
             esper.add_component(entity, Susceptible(
-                immunity = np.random.uniform(0, 0.05)
+                immunity = self.rng.numpy.uniform(0, 0.05)
             ))
 
     # --------------------------------------------------
@@ -188,13 +192,13 @@ class SIREpidemicModel:
         """
 
         for entity in self.entity_iDs:
-            num_contacts = max(0, int(np.random.poisson(self.average_contacts)))  
+            num_contacts = max(0, int(self.rng.numpy.poisson(self.average_contacts)))
 
             if num_contacts > 0:
                 possible_contacts = [x for x in self.entity_iDs if x != entity] 
-                contacts = random.sample(possible_contacts, num_contacts)
+                contacts = self.rng.python.sample(possible_contacts, num_contacts)
 
-                strengths = [random.uniform(0.1, 1.0) for _ in range(num_contacts)]
+                strengths = [self.rng.python.uniform(0.1, 1.0) for _ in range(num_contacts)]
 
                 esper.add_component(entity, ContactNetwork(contacts = contacts, 
                                                            contact_strength = strengths))
@@ -284,7 +288,7 @@ class SIREpidemicModel:
             #num_contacts = max(0, int(np.random.poisson(self.average_contacts)))
             
             # dispersion parameter
-            num_contacts = max(0, int(np.random.negative_binomial(dispersion, dispersion / (dispersion + self.average_contacts))))
+            num_contacts = max(0, int(self.rng.numpy.negative_binomial(dispersion, dispersion / (dispersion + self.average_contacts))))
             if num_contacts == 0:
                 continue
 
@@ -311,7 +315,7 @@ class SIREpidemicModel:
             if total_weight == 0:
                 continue
             probability = [weight / total_weight for weight in weights]
-            contacts = list(np.random.choice(candidates, 
+            contacts = list(self.rng.numpy.choice(candidates,
                                              size = min(num_contacts, len(candidates)), 
                                              replace = False, 
                                              p = probability))
@@ -368,7 +372,7 @@ class SIREpidemicModel:
         - None (components are modified directly on entities in the world).
         """
         
-        entities_to_infect = random.sample(self.entity_iDs, min(self.initial_infected, len(self.entity_iDs)))
+        entities_to_infect = self.rng.python.sample(self.entity_iDs, min(self.initial_infected, len(self.entity_iDs)))
         
 
         for entity in entities_to_infect:
@@ -376,10 +380,10 @@ class SIREpidemicModel:
             if esper.has_component(entity, Susceptible):
                 esper.remove_component(entity, Susceptible)
                 esper.add_component(entity, Infected(
-                    viral_load = np.random.uniform(700, 1000),
+                    viral_load = self.rng.numpy.uniform(700, 1000),
                     days_infected = 1,
                     infectious = True,
-                    recovery_time = max(1, int(random.normalvariate(12, 4)))))
+                    recovery_time = max(1, int(self.rng.python.normalvariate(12, 4)))))
                 
                 if esper.has_component(entity, Location):
                     loc = esper.component_for_entity(entity, Location)
@@ -400,6 +404,7 @@ class SIREpidemicModel:
         - None (systems are processed directly on the world).
         """
         
+        esper.switch_world(self.world_name)
         esper.process()
 
         self._collect_data()  # Collect data after processing systems
