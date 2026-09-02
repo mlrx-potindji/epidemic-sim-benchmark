@@ -1,7 +1,7 @@
 [project]
-name = "ecs-abm-benchmark"
+name = "epidemic-sim-benchmark"
 version = "0.1.0"
-description = "ECS vs Mesa ABM benchmarking project"
+description = "Epidemic simulation benchmark for ECS and Mesa agent-based models"
 authors = [
     {name = "mlrx-potindji",email = "malraux.potindji@gmail.com"}
 ]

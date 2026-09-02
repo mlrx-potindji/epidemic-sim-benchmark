@@ -1,4 +1,4 @@
-# ECS ABM Benchmark
+# Epidemic Simulation Benchmark
 
 Research code for comparing an Esper Entity Component System epidemic model
 with a Mesa agent-based implementation.

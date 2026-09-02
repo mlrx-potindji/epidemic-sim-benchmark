@@ -121,7 +121,27 @@ wheels = [
 ]
 
 [[package]]
-name = "ecs-abm-benchmark"
+name = "ema-workbench"
+version = "2.5.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "matplotlib" },
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "platypus-opt" },
+    { name = "salib" },
+    { name = "scikit-learn" },
+    { name = "seaborn" },
+    { name = "statsmodels" },
+    { name = "tqdm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c5/4f/a18d76a8b38842d10f15de657416d636124e2a5e43d9bd75e72c737265f2/ema_workbench-2.5.3.tar.gz", hash = "sha256:e5ce847c3631a421cd1d3052bf6862e0ca3a0d58d2745de1ec4fb7c995abff80", size = 28534440, upload-time = "2025-04-23T14:23:28.803Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/19/54/074c4cd454458d65797c3d46360c53cf8d77143ca7bd17200d5121719c80/ema_workbench-2.5.3-py3-none-any.whl", hash = "sha256:d616621d15db74ef773fe8a8b7d2ee3b83d6c8e190f51f60e3a2d612e2f84634", size = 28587243, upload-time = "2025-04-23T14:23:25.814Z" },
+]
+
+[[package]]
+name = "epidemic-sim-benchmark"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
@@ -143,26 +163,6 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.0.0,<3.0.0" },
     { name = "pandas", specifier = ">=2.0.0,<3.0.0" },
     { name = "scipy", specifier = ">=1.14.0,<2.0.0" },
-]
-
-[[package]]
-name = "ema-workbench"
-version = "2.5.3"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "matplotlib" },
-    { name = "numpy" },
-    { name = "pandas" },
-    { name = "platypus-opt" },
-    { name = "salib" },
-    { name = "scikit-learn" },
-    { name = "seaborn" },
-    { name = "statsmodels" },
-    { name = "tqdm" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/c5/4f/a18d76a8b38842d10f15de657416d636124e2a5e43d9bd75e72c737265f2/ema_workbench-2.5.3.tar.gz", hash = "sha256:e5ce847c3631a421cd1d3052bf6862e0ca3a0d58d2745de1ec4fb7c995abff80", size = 28534440, upload-time = "2025-04-23T14:23:28.803Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/19/54/074c4cd454458d65797c3d46360c53cf8d77143ca7bd17200d5121719c80/ema_workbench-2.5.3-py3-none-any.whl", hash = "sha256:d616621d15db74ef773fe8a8b7d2ee3b83d6c8e190f51f60e3a2d612e2f84634", size = 28587243, upload-time = "2025-04-23T14:23:25.814Z" },
 ]
 
 [[package]]
