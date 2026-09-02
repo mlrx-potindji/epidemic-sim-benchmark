@@ -142,7 +142,7 @@ def plot_spatial_heatmap(spatial_location_series, time_step=None, save_path=None
 
     cell_width = world_size / grid_resolution
 
-    # ── Index data — identical to scatter function ─────────────────────────
+    # ── Index data — identical to scatter function
     indexed_data = defaultdict(lambda: defaultdict(list))
     max_t = 0
 
@@ -209,14 +209,13 @@ def plot_spatial_heatmap(spatial_location_series, time_step=None, save_path=None
         rgba = np.dstack([rgb, alpha_norm])
         return rgba
 
-    # ── Legend handles — fixed, shown once ────────────────────────────────
-    legend_handles = [
+    # ── Legend handles — fixed, shown once
         plt.Line2D([0], [0], marker='o', color='w',
                    markerfacecolor=colour, markersize=10, label=comp.capitalize())
         for comp, colour in compartment_colours.items()
     ]
 
-    # ── Single frame ───────────────────────────────────────────────────────
+    # ── Single frame
     if time_step is not None:
         fig, ax = plt.subplots(figsize=(9, 9))
         fig.patch.set_facecolor("black")
@@ -252,7 +251,7 @@ def plot_spatial_heatmap(spatial_location_series, time_step=None, save_path=None
         else:
             plt.show()
 
-    # ── Animation ──────────────────────────────────────────────────────────
+    # ── Animation
     else:
         fig, ax = plt.subplots(figsize=(9, 9))
         fig.patch.set_facecolor("black")
@@ -334,7 +333,7 @@ def plot_spatial_3d_wave(spatial_location_series, time_step=None, save_path=None
 
     cell_width = world_size / grid_resolution
 
-    # ── Index data ─────────────────────────────────────────────────────────
+    # ── Index data
     indexed_data = defaultdict(lambda: defaultdict(list))
     max_t = 0
 
@@ -391,7 +390,7 @@ def plot_spatial_3d_wave(spatial_location_series, time_step=None, save_path=None
         zmax = max(zmax, d.max())
     zmax = max(zmax, 1e-6)
 
-    # ── Single frame ───────────────────────────────────────────────────────
+    # ── Single frame
     if time_step is not None:
         fig = plt.figure(figsize=(12, 9))
         fig.patch.set_facecolor("black")
@@ -433,7 +432,7 @@ def plot_spatial_3d_wave(spatial_location_series, time_step=None, save_path=None
         else:
             plt.show()
 
-    # ── Animation ──────────────────────────────────────────────────────────
+    # ── Animation
     else:
         fig = plt.figure(figsize=(12, 9))
         fig.patch.set_facecolor("black")
