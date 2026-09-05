@@ -295,29 +295,17 @@ def plot_spatial_heatmap(spatial_location_series, time_step=None, save_path=None
             plt.show()
 
 def plot_spatial_3d_wave(spatial_location_series, time_step=None, save_path=None,
-                          world_size=500, grid_resolution=80, sigma=5.0,
-                          compartment="infected"):
+                          world_size=500, grid_resolution=80, sigma=5.0):
     """
-    Renders epidemic density as an animated 3D surface wave.
+    Renders smoothed infected-agent density as an animated 3D surface wave.
 
     Parameters
     ----------
-    compartment : str
-        Which compartment to render as the wave surface.
-        Use "infected" for epidemic wave propagation.
-        Pass None to composite all compartments into a single surface.
     sigma : float
         Gaussian smoothing radius in grid cells.
     grid_resolution : int
         Keep lower for 3D (80-100) — 3D rendering is more expensive than 2D.
     """
-
-    compartment_colours = {
-        "susceptible": cm.Blues,
-        "infected":    cm.inferno,
-        "recovered":   cm.Greens,
-        "death":       cm.bone
-    }
 
     cell_width = world_size / grid_resolution
 
@@ -355,42 +343,22 @@ def plot_spatial_3d_wave(spatial_location_series, time_step=None, save_path=None
             grid[cj, ci] += 1.0
         return gaussian_filter(grid, sigma=sigma)
 
-    def build_composite_density(frame_data):
-        """Sum all compartment densities into one surface — shows total activity"""
-        weights = {"susceptible": 0.3, "infected": 1.0,
-                   "recovered": 0.5, "death": 0.1}
-        combined = np.zeros((grid_resolution, grid_resolution))
-        for comp, w in weights.items():
-            combined += build_density(frame_data, comp) * w
-        return combined
-
-    # Determine which density function to use
-    use_composite = compartment is None
-    cmap = cm.inferno if use_composite else compartment_colours.get(compartment, cm.inferno)
+    cmap = cm.viridis
 
     # Pre-compute global zmax for consistent z-axis across all frames
     zmax = 0
     for step in indexed_data:
-        if use_composite:
-            d = build_composite_density(indexed_data[step])
-        else:
-            d = build_density(indexed_data[step], compartment)
+        d = build_density(indexed_data[step], "infected")
         zmax = max(zmax, d.max())
     zmax = max(zmax, 1e-6)
 
     # ── Single frame
     if time_step is not None:
         fig = plt.figure(figsize=(12, 9))
-        fig.patch.set_facecolor("black")
+        fig.patch.set_facecolor("white")
         ax = fig.add_subplot(111, projection='3d')
-        ax.set_facecolor("black")
-
-        if use_composite:
-            zz = build_composite_density(indexed_data[time_step])
-            title_comp = "All Compartments (weighted)"
-        else:
-            zz = build_density(indexed_data[time_step], compartment)
-            title_comp = compartment.capitalize()
+        ax.set_facecolor("white")
+        zz = build_density(indexed_data[time_step], "infected")
 
         zz_norm = zz / zmax  # normalise to [0,1] for colouring
 
@@ -402,19 +370,20 @@ def plot_spatial_3d_wave(spatial_location_series, time_step=None, save_path=None
             shade=True
         )
 
-        counts = {c: len(indexed_data[time_step].get(c, []))
-                  for c in compartment_colours}
+        infected_count = len(indexed_data[time_step].get("infected", []))
         ax.set_title(
-            f"{title_comp} — Step {time_step}   |   "
-            f"S={counts['susceptible']}  I={counts['infected']}  "
-            f"R={counts['recovered']}  D={counts['death']}",
-            color="white", fontsize=11, pad=12
+            f"Infected density — Step {time_step}   |   "
+            f"Infected={infected_count}",
+            color="#222222", fontsize=11, pad=12
         )
         _style_3d_ax(ax, world_size, zmax)
+        fig.colorbar(plt.cm.ScalarMappable(
+            norm=plt.Normalize(0, zmax), cmap=cmap),
+            ax=ax, shrink=0.65, pad=0.1, label="Smoothed infected density")
         fig.tight_layout()
 
         if save_path:
-            plt.savefig(save_path, dpi=120, facecolor="black")
+            plt.savefig(save_path, dpi=120, facecolor="white")
             print(f"Snapshot saved to {save_path}")
             plt.close(fig)
         else:
@@ -423,12 +392,12 @@ def plot_spatial_3d_wave(spatial_location_series, time_step=None, save_path=None
     # ── Animation
     else:
         fig = plt.figure(figsize=(12, 9))
-        fig.patch.set_facecolor("black")
+        fig.patch.set_facecolor("white")
         ax = fig.add_subplot(111, projection='3d')
-        ax.set_facecolor("black")
+        ax.set_facecolor("white")
 
         # Initial surface
-        zz = build_density(indexed_data[0], compartment or "infected")
+        zz = build_density(indexed_data[0], "infected")
         zz_norm = zz / zmax
 
         # plot_surface cannot be updated in place with set_data like imshow
@@ -443,6 +412,10 @@ def plot_spatial_3d_wave(spatial_location_series, time_step=None, save_path=None
 
         _style_3d_ax(ax, world_size, zmax)
 
+        fig.colorbar(plt.cm.ScalarMappable(
+            norm=plt.Normalize(0, zmax), cmap=cmap),
+            ax=ax, shrink=0.65, pad=0.1, label="Smoothed infected density")
+
         step_text = fig.text(
             0.5, 0.96, "Step 0",
             ha="center", va="top",
@@ -454,10 +427,7 @@ def plot_spatial_3d_wave(spatial_location_series, time_step=None, save_path=None
             surf_container[0].remove()
 
             frame_data = indexed_data[frame]
-            if use_composite:
-                zz = build_composite_density(frame_data)
-            else:
-                zz = build_density(frame_data, compartment)
+            zz = build_density(frame_data, "infected")
 
             zz_norm = zz / zmax
             surf_container[0] = ax.plot_surface(
@@ -468,14 +438,10 @@ def plot_spatial_3d_wave(spatial_location_series, time_step=None, save_path=None
                 shade=True
             )
 
-            counts = {c: len(frame_data.get(c, []))
-                      for c in compartment_colours}
+            infected_count = len(frame_data.get("infected", []))
             step_text.set_text(
-                f"Step {frame}   |   "
-                f"S={counts['susceptible']}  "
-                f"I={counts['infected']}  "
-                f"R={counts['recovered']}  "
-                f"D={counts['death']}"
+                f"Infected density   |   Step {frame}   |   "
+                f"Infected={infected_count}"
             )
             return [surf_container[0], step_text]
 
@@ -489,27 +455,27 @@ def plot_spatial_3d_wave(spatial_location_series, time_step=None, save_path=None
 
         if save_path:
             anim.save(save_path, writer='pillow', fps=8, dpi=100)
-            print(f"3D wave animation saved to {save_path}")
+            print(f"Infected density wave saved to {save_path}")
             plt.close(fig)
         else:
             plt.show()
 
 
 def _style_3d_ax(ax, world_size, zmax):
-    """Shared 3D axis styling — dark theme"""
+    """Shared 3D axis styling for the light scientific theme."""
     ax.set_xlim(0, world_size)
     ax.set_ylim(0, world_size)
     ax.set_zlim(0, zmax * 1.1)
-    ax.set_xlabel("X", color="white", labelpad=8)
-    ax.set_ylabel("Y", color="white", labelpad=8)
-    ax.set_zlabel("Density", color="white", labelpad=8)
-    ax.tick_params(colors="white")
+    ax.set_xlabel("X position", color="#333333", labelpad=8)
+    ax.set_ylabel("Y position", color="#333333", labelpad=8)
+    ax.set_zlabel("Smoothed infected density", color="#333333", labelpad=8)
+    ax.tick_params(colors="#333333")
     ax.xaxis.pane.fill = False
     ax.yaxis.pane.fill = False
     ax.zaxis.pane.fill = False
-    ax.xaxis.pane.set_edgecolor("#333333")
-    ax.yaxis.pane.set_edgecolor("#333333")
-    ax.zaxis.pane.set_edgecolor("#333333")
-    ax.grid(True, color="#222222", linewidth=0.5)
+    ax.xaxis.pane.set_edgecolor("#cccccc")
+    ax.yaxis.pane.set_edgecolor("#cccccc")
+    ax.zaxis.pane.set_edgecolor("#cccccc")
+    ax.grid(True, color="#dddddd", linewidth=0.5)
     # Viewing angle — adjust for best perspective
     ax.view_init(elev=35, azim=-60)

@@ -22,8 +22,7 @@ def main():
     plot_spatial_snapshot(spatial_location_series, save_path="spatial_animation.gif")
     plot_spatial_heatmap(model.spatial_location_series_data, save_path="spatial_heatmap.gif")
     plot_spatial_3d_wave(model.spatial_location_series_data,
-                         save_path="wave_composite.gif", world_size=500,
-                         compartment=None)
+                         save_path="infected_density_wave.gif", world_size=500)
 
 
 if __name__ == "__main__":
