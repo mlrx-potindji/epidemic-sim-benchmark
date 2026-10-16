@@ -85,15 +85,19 @@ the core dependencies because its current releases do not resolve for Python
 
 ## ECS vs Mesa Benchmark
 
-Run the benchmark experiments from the repository root:
+Follow the step-by-step protocol in [experiments/README.md](experiments/README.md).
+In short, check structural parity, run independent epidemiological replicates,
+then measure runtime at fixed population sizes and steps:
 
 ```bash
-uv run python -m experiments.benchmark_runner parity --replicates 100 --n-agents 300
-uv run python -m experiments.benchmark_runner profile --n-agents 1000 --steps 50
+uv run pytest tests/test_structural_parity.py
+uv run python -m experiments.profiling.benchmark_models --n-agents 1000 --steps 50 --repeats 30 --warmups 3
+uv run python -m experiments.plot_benchmark_results --runtime results/runtime_*.json
 ```
 
-See [experiments/README.md](experiments/README.md) for options and quick-run
-instructions. The Mesa model is also available through `scripts/run_mesa.py`.
+The runtime command saves repeat-level JSON; the plot command produces
+`results/runtime_comparison.png`. The Mesa model is also available through
+`scripts/run_mesa.py`.
 
 Both model constructors accept the shared configs. The older keyword-based
 constructors remain supported; when a config is supplied, it takes precedence

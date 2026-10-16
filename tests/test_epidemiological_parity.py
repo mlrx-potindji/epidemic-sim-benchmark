@@ -10,7 +10,7 @@ from argparse import Namespace
 import numpy as np
 import pytest
 
-from experiments.parity.compare_implementations import build_benchmark_config, replicate
+from experiments.parity.compare_implementations import alpha_budgets, build_benchmark_config, replicate
 from experiments.parity.statistical_tests import ESTIMANDS, compare_estimand, summarise
 
 # Regression guard run on 4 scenarios x 3 estimands x 3 tests = 36 comparisons: the error level of
@@ -52,6 +52,13 @@ def test_benchmark_runner_uses_shared_benchmark_config():
     assert config.frameworks == ["ecs", "mesa"]
 
 
+def test_familywise_alpha_is_allocated_across_planned_scenarios():
+    screening, equivalence = alpha_budgets(0.05, planned_scenarios=4)
+
+    assert screening == pytest.approx(0.05 / (4 * 3 * 4))
+    assert equivalence == pytest.approx(0.05 / (4 * 3 * 2))
+
+
 def test_summarise_gives_the_three_estimands():
     series = {"susceptible": [8, 5, 4, 4], "infected": [2, 4, 5, 3], "recovered": [0, 1, 1, 3],
               "death": [0, 0, 0, 0]}
@@ -66,6 +73,39 @@ def test_comparison_detects_a_shift_and_a_variance_change():
     assert not shifted["parity"] and shifted["p_mean_welch"] < 0.01
     wider = compare_estimand(rng.normal(0, 1, 200), rng.normal(0, 2, 200), rng)
     assert not wider["parity"] and wider["variance_ratio_low"] > 1
+
+
+def test_equivalence_requires_mean_and_variance_intervals_within_margins():
+    rng = np.random.default_rng(31)
+    ecs = rng.normal(0.4, 0.08, 400)
+    mesa = ecs + rng.normal(0.005, 0.002, 400)
+    result = compare_estimand(
+        ecs,
+        mesa,
+        np.random.default_rng(32),
+        alpha=0.025,
+        mean_equivalence_margin=0.03,
+        variance_ratio_bounds=(0.8, 1.25),
+    )
+    assert result["mean_equivalent"]
+    assert result["variance_equivalent"]
+    assert result["equivalent"]
+    assert result["mean_equivalence_ci_low"] < result["mean_equivalence_ci_high"]
+
+
+def test_constant_estimands_are_reported_as_inconclusive():
+    result = compare_estimand(
+        [4.0] * 20,
+        [4.0] * 20,
+        np.random.default_rng(33),
+        mean_equivalence_margin=1.0,
+        variance_ratio_bounds=(0.8, 1.25),
+    )
+
+    assert result["variance_ratio"] is None
+    assert result["variance_equivalent"] is None
+    assert result["equivalent"] is None
+    assert result["parity"] is False
 
 
 @pytest.mark.slow
