@@ -4,7 +4,7 @@ Run from the ``project_outputs`` folder to keep the generated files together:
 
     cd project_outputs
     uv run python ../scripts/run_mesa.py            # summary only
-    uv run python ../scripts/run_mesa.py --plot     # also save the epidemic curves
+    uv run python ../scripts/run_mesa.py --plot     # save the epidemic and spatial plots
 """
 import argparse
 import time
@@ -17,7 +17,7 @@ def main():
     parser.add_argument("--n-agents", type=int, default=1000)
     parser.add_argument("--steps", type=int, default=400)
     parser.add_argument("--seed", type=int, default=28022026)
-    parser.add_argument("--plot", action="store_true", help="save epidemic_curves_mesa.png")
+    parser.add_argument("--plot", action="store_true", help="save epidemic and spatial plots")
     args = parser.parse_args()
 
     # Same parameters as the ECS demo in scripts/run_ecs.py
@@ -38,8 +38,26 @@ def main():
           f"never infected: {series['susceptible'][-1]}")
 
     if args.plot:
-        from epidemic_sim.analysis.plotting import plot_epidemic_curves
+        from epidemic_sim.analysis.plotting import (
+            plot_epidemic_curves,
+            plot_spatial_3d_wave,
+            plot_spatial_heatmap,
+            plot_spatial_snapshot,
+        )
+
+        spatial_data = model.spatial_location_series_data
         plot_epidemic_curves(series, save_path="epidemic_curves_mesa.png")
+        plot_spatial_snapshot(spatial_data, save_path="spatial_animation_mesa.gif")
+        plot_spatial_heatmap(
+            spatial_data,
+            save_path="spatial_heatmap_mesa.gif",
+            world_size=model.world_size,
+        )
+        plot_spatial_3d_wave(
+            spatial_data,
+            save_path="infected_density_wave_mesa.gif",
+            world_size=model.world_size,
+        )
 
 
 if __name__ == "__main__":

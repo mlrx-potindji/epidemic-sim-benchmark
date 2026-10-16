@@ -31,3 +31,9 @@ class BenchmarkConfig:
     def __post_init__(self) -> None:
         if self.frameworks is None:
             object.__setattr__(self, "frameworks", ["ecs", "mesa"])
+        if not self.frameworks or any(
+            framework not in {"ecs", "mesa"} for framework in self.frameworks
+        ):
+            raise ValueError("frameworks must contain 'ecs', 'mesa', or both")
+        if self.n_replicates < 1:
+            raise ValueError(f"n_replicates must be >= 1, got {self.n_replicates}")

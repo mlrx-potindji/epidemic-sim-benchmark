@@ -5,15 +5,13 @@ Estimands, tests and acceptance rule are documented in
 Both implementations are run on independent seeds; the means, the whole distributions
 and the variances of the three estimands must agree.
 """
-import contextlib
-import io
+from argparse import Namespace
 
 import numpy as np
 import pytest
 
+from experiments.parity.compare_implementations import build_benchmark_config, replicate
 from experiments.parity.statistical_tests import ESTIMANDS, compare_estimand, summarise
-from epidemic_sim.ecs.simulation import SIREpidemicModel
-from epidemic_sim.mesa import MesaSIREpidemicModel
 
 # Regression guard run on 4 scenarios x 3 estimands x 3 tests = 36 comparisons: the error level of
 # each is lowered to 0.001 (family-wise false-alarm rate about 3 %). The report script
@@ -30,21 +28,28 @@ SCENARIOS = {
 }
 
 
-def replicate(scenario: dict, replicates: int, n_agents: int = 200, world_size: int = 150):
-    base = dict(n_agents=n_agents, world_size=world_size, initial_infected=6,
-                beta_spatial=0.3, beta_network=0.25)
-    runs = {"ecs": [], "mesa": []}
-    for r in range(replicates):
-        with contextlib.redirect_stdout(io.StringIO()):
-            ecs = SIREpidemicModel(seed=500 + r, **base, **scenario)
-            ecs.run(300)
-        runs["ecs"].append(summarise(ecs.time_series_data, n_agents))
-        ecs.clean_up()
-        model = MesaSIREpidemicModel(seed=900_000 + r, collect_spatial=False, **base, **scenario)
-        with contextlib.redirect_stdout(io.StringIO()):
-            model.run(300)
-        runs["mesa"].append(summarise(model.time_series_data, n_agents))
-    return runs
+def run_replicates(scenario: dict, replicates: int, n_agents: int = 200, world_size: int = 150):
+    config = build_benchmark_config(
+        Namespace(
+            n_agents=n_agents,
+            world_size=world_size,
+            max_steps=300,
+            replicates=replicates,
+        ),
+        scenario,
+    )
+    return replicate(config, first_seed=500)
+
+
+def test_benchmark_runner_uses_shared_benchmark_config():
+    config = build_benchmark_config(
+        Namespace(n_agents=200, world_size=150, max_steps=300, replicates=12),
+        SCENARIOS["hazard_similarity"],
+    )
+    assert config.n_replicates == 12
+    assert config.simulation.n_agents == 200
+    assert config.disease_model.spatial_new
+    assert config.frameworks == ["ecs", "mesa"]
 
 
 def test_summarise_gives_the_three_estimands():
@@ -66,7 +71,7 @@ def test_comparison_detects_a_shift_and_a_variance_change():
 @pytest.mark.slow
 @pytest.mark.parametrize("name", sorted(SCENARIOS))
 def test_epidemic_indicators_have_the_same_mean_and_variance(name):
-    runs = replicate(SCENARIOS[name], replicates=60)
+    runs = run_replicates(SCENARIOS[name], replicates=60)
     rng = np.random.default_rng(0)
     for estimand in ESTIMANDS:
         result = compare_estimand([r[estimand] for r in runs["ecs"]],

@@ -16,8 +16,9 @@ from scipy.stats import ks_2samp
 
 from epidemic_sim.ecs.components import ContactNetwork, Demographics, Infected, Location
 from epidemic_sim.ecs.simulation import SIREpidemicModel
+from epidemic_sim.config import SimulationConfig
+from epidemic_sim.disease_model import DiseaseModelConfig, HealthState
 from epidemic_sim.mesa import MesaSIREpidemicModel
-from epidemic_sim.mesa.setup import State
 
 PARAMS = dict(n_agents=600, world_size=300, initial_infected=12, spatial_new=True,
               network_new=True, space_attribute_similarity=True, dispersion=0.65)
@@ -66,15 +67,16 @@ def mesa_snapshot(model: MesaSIREpidemicModel) -> Snapshot:
     people = model.space.active_agents
     distance, gap, strength = [], [], []
     for person in people:
-        for other, weight in zip(person.contacts, person.contact_strength):
+        for other in model.contact_graph.successors(person):
+            weight = model.contact_graph[person][other]["weight"]
             distance.append(np.hypot(person.x - other.x, person.y - other.y))
             gap.append(abs(person.age - other.age))
             strength.append(weight)
     return Snapshot(model.space.agent_positions[:, 0].copy(), model.space.agent_positions[:, 1].copy(),
                     np.array([p.age for p in people], dtype=float),
                     np.array([p.mobility for p in people]),
-                    sum(p.state is State.Infected for p in people),
-                    np.array([len(p.contacts) for p in people]),
+                    sum(p.state is HealthState.INFECTED for p in people),
+                    np.array([model.contact_graph.out_degree(p) for p in people]),
                     np.array(distance), np.array(gap), np.array(strength))
 
 
@@ -120,3 +122,24 @@ def test_same_output_format_and_conservation():
             assert (series["susceptible"][i] + series["infected"][i]
                     + series["recovered"][i] + series["death"][i]) == 120
     ecs.clean_up()
+
+
+def test_mesa_contact_graph_is_directed_and_weighted():
+    model = MesaSIREpidemicModel(seed=21, **PARAMS)
+    assert model.contact_graph.is_directed()
+    assert model.contact_graph.number_of_nodes() == PARAMS["n_agents"]
+    assert all("weight" in data for _, _, data in model.contact_graph.edges(data=True))
+    assert all(source is not target for source, target in model.contact_graph.edges)
+
+
+def test_ecs_accepts_shared_configs():
+    model = SIREpidemicModel(
+        simulation_config=SimulationConfig(seed=21, n_agents=20, world_size=80),
+        disease_model_config=DiseaseModelConfig(spatial_new=True, network_new=True),
+    )
+    assert model.n_agents == 20
+    assert model.world_size == 80
+    assert model.seed == 21
+    assert isinstance(model.rng.numpy, np.random.Generator)
+    assert not hasattr(model.rng, "python")
+    model.clean_up()
