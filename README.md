@@ -9,8 +9,9 @@ a controlled comparison with a conventional object-oriented agent-based model.
 
 ## Current Status
 
-The ECS prototype is implemented and runnable. The Mesa model and the
-cross-implementation benchmark are planned work and are not runnable yet.
+The ECS and Mesa models are implemented, with shared simulation and disease
+configuration objects used by both implementations. The benchmark experiments
+compare their epidemic outcomes and profile their runtime.
 
 The project currently demonstrates:
 
@@ -28,11 +29,11 @@ The project currently demonstrates:
 ## Layout
 
 - `src/epidemic_sim/ecs`: implemented Esper model, components, and systems
-- `src/epidemic_sim/mesa`: Mesa implementation area
+- `src/epidemic_sim/mesa`: Mesa implementation
 - `src/epidemic_sim/networks`: shared network utilities
 - `src/epidemic_sim/data`: data-related package code
 - `src/epidemic_sim/analysis`: library analysis and visualization utilities
-- `scripts`: executable ECS and data-generation scripts, plus planned Mesa and benchmark entry points
+- `scripts`: executable ECS and Mesa runners, plus data-generation scripts
 - `experiments`: benchmark, profiling, and parity experiment code
 - `data`: raw, processed, and generated datasets
 - `results` and `project_outputs`: generated artifacts
@@ -93,6 +94,28 @@ uv run python -m experiments.benchmark_runner profile --n-agents 1000 --steps 50
 
 See [experiments/README.md](experiments/README.md) for options and quick-run
 instructions. The Mesa model is also available through `scripts/run_mesa.py`.
+
+Both model constructors accept the shared configs. The older keyword-based
+constructors remain supported; when a config is supplied, it takes precedence
+over legacy arguments for that config's values:
+
+```python
+from epidemic_sim.config import SimulationConfig
+from epidemic_sim.disease_model import DiseaseModelConfig
+from epidemic_sim.mesa import MesaSIREpidemicModel
+
+model = MesaSIREpidemicModel(
+    simulation_config=SimulationConfig(seed=42, n_agents=300),
+    disease_model_config=DiseaseModelConfig(
+        beta_spatial=0.3,
+        spatial_new=True,
+        network_new=True,
+    ),
+)
+```
+
+Mesa stores its directed contact network as a weighted NetworkX graph; the
+graph is the source of truth for contact transmission and rewiring.
 
 ## Contributing
 

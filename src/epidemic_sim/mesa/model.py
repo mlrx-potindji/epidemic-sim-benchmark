@@ -37,20 +37,58 @@ import math
 from typing import Mapping, Optional
 
 import mesa
+import networkx as nx
 import numpy as np
 from mesa.datacollection import DataCollector
 from mesa.experimental.continuous_space import ContinuousSpace
 
 from .agents import Person
-from .setup import (AGE_RANGE, IMMUNITY_AFTER_RECOVERY, IMMUNITY_RANGE, INITIAL_DAYS_INFECTED,
-                    INITIAL_VIRAL_LOAD_RANGE, MOBILITY_RANGE, NEW_VIRAL_LOAD_RANGE,
-                    QUARANTINE_COMPLIANCE, RANDOM_NETWORK_STRENGTH_RANGE, RECOVERY_TIME_MEAN,
-                    RECOVERY_TIME_SD, REWIRING_DISPERSION, STATE_SERIES_NAMES, State,
-                    health_counts)
+from ..config import SimulationConfig
+from ..disease_model import (
+    AGE_RANGE,
+    IMMUNITY_AFTER_RECOVERY,
+    IMMUNITY_RANGE,
+    INITIAL_DAYS_INFECTED,
+    INITIAL_VIRAL_LOAD_RANGE,
+    MOBILITY_RANGE,
+    NEW_VIRAL_LOAD_RANGE,
+    QUARANTINE_COMPLIANCE,
+    RANDOM_NETWORK_STRENGTH_RANGE,
+    RECOVERY_TIME_MEAN,
+    RECOVERY_TIME_SD,
+    REWIRING_DISPERSION,
+    DiseaseModelConfig,
+    HealthState,
+)
+from ..validation import validate_all
+
+STATE_SERIES_NAMES = {state: state.value for state in HealthState}
+
+
+def health_counts(
+    n_agents: int,
+    initial_infected: int,
+    proportions: Optional[Mapping[HealthState, float]] = None,
+) -> dict[HealthState, int]:
+    if proportions is None:
+        return {
+            HealthState.SUSCEPTIBLE: n_agents - initial_infected,
+            HealthState.INFECTED: initial_infected,
+            HealthState.RECOVERED: 0,
+            HealthState.DEAD: 0,
+        }
+    if any(p < 0 for p in proportions.values()) or abs(sum(proportions.values()) - 1.0) > 1e-9:
+        raise ValueError("initial proportions must be non-negative and sum to 1")
+    counts = {state: int(round(proportions.get(state, 0.0) * n_agents)) for state in HealthState}
+    others = sum(count for state, count in counts.items() if state is not HealthState.SUSCEPTIBLE)
+    if others > n_agents:
+        raise ValueError("initial proportions give more people than n_agents")
+    counts[HealthState.SUSCEPTIBLE] = n_agents - others
+    return counts
 
 
 class MesaSIREpidemicModel(mesa.Model):
-    def __init__(self, seed: int, tau: float = 25, alpha: Optional[float] = None,
+    def __init__(self, seed: int | None = None, tau: float = 25, alpha: Optional[float] = None,
                  n_agents: int = 500, world_size: int = 100, initial_infected: int = 5,
                  average_contacts: int = 10, beta_spatial: float = 0.10,
                  beta_network: float = 0.20, enable_quarantine: bool = False,
@@ -59,11 +97,54 @@ class MesaSIREpidemicModel(mesa.Model):
                  space_attribute_similarity: Optional[bool] = False,
                  dt: float = 1.0, dispersion: float = 0.7, rewire_every: int = 18,
                  collect_spatial: bool = True,
-                 initial_proportions: Optional[Mapping[State, float]] = None):
-        self._validate_parameters(seed, tau, alpha, n_agents, world_size,
-                                  initial_infected, average_contacts,
-                                  beta_spatial, beta_network,
-                                  transmission_radius, dt, dispersion)
+                 initial_proportions: Optional[Mapping[HealthState, float]] = None,
+                 simulation_config: SimulationConfig | None = None,
+                 disease_model_config: DiseaseModelConfig | None = None):
+        """Initialize from shared configs or legacy keyword parameters.
+
+        A supplied config takes precedence over legacy parameters in its group.
+        """
+        simulation_config = simulation_config or SimulationConfig(
+            seed=seed,
+            n_agents=n_agents,
+            world_size=world_size,
+            initial_infected=initial_infected,
+            average_contacts=average_contacts,
+            collect_spatial=collect_spatial,
+        )
+        disease_model_config = disease_model_config or DiseaseModelConfig(
+            beta_spatial=beta_spatial,
+            beta_network=beta_network,
+            transmission_radius=transmission_radius,
+            dt=dt,
+            alpha=alpha,
+            tau=tau,
+            dispersion=dispersion,
+            spatial_new=bool(spatial_new),
+            network_new=bool(network_new),
+            space_attribute_similarity=bool(space_attribute_similarity),
+            enable_quarantine=enable_quarantine,
+        )
+        validate_all(simulation_config, disease_model_config)
+        self.simulation_config = simulation_config
+        self.disease_model_config = disease_model_config
+        seed = simulation_config.seed
+        n_agents = simulation_config.n_agents
+        world_size = simulation_config.world_size
+        initial_infected = simulation_config.initial_infected
+        average_contacts = simulation_config.average_contacts
+        collect_spatial = simulation_config.collect_spatial
+        beta_spatial = disease_model_config.beta_spatial
+        beta_network = disease_model_config.beta_network
+        enable_quarantine = disease_model_config.enable_quarantine
+        transmission_radius = disease_model_config.transmission_radius
+        dt = disease_model_config.dt
+        alpha = disease_model_config.alpha
+        tau = disease_model_config.tau
+        dispersion = disease_model_config.dispersion
+        spatial_new = disease_model_config.spatial_new
+        network_new = disease_model_config.network_new
+        space_attribute_similarity = disease_model_config.space_attribute_similarity
         super().__init__(rng=seed)  # self.rng (numpy Generator) and self.random (stdlib Random)
 
         self.n_agents: int = n_agents
@@ -73,7 +154,7 @@ class MesaSIREpidemicModel(mesa.Model):
         self.beta_spatial: float = beta_spatial
         self.beta_network: float = beta_network
         self.enable_quarantine: bool = enable_quarantine
-        self.seed: int = seed
+        self.seed: int | None = seed
         self.transmission_radius: float = transmission_radius
         self.dt: float = dt
         self.alpha: float = alpha if alpha is not None else 0.20 * world_size
@@ -90,12 +171,14 @@ class MesaSIREpidemicModel(mesa.Model):
             [[0, world_size], [0, world_size]], torus=False,
             random=self.random, n_agents=n_agents)
         self._populate(health_counts(n_agents, initial_infected, initial_proportions))
+        self.contact_graph: nx.DiGraph = nx.DiGraph()
+        self.contact_graph.add_nodes_from(self.space.active_agents)
         if self._uses_similarity_network:
             self._build_similarity_network(self.dispersion, alive_only=False)
         else:
             self._create_social_network()
 
-        self._counts: dict[State, int] = {}
+        self._counts: dict[HealthState, int] = {}
         model_reporters = {"time": lambda m: m.steps - 1}
         for state, name in STATE_SERIES_NAMES.items():
             model_reporters[name] = (lambda m, s=state: m._counts.get(s, 0))
@@ -103,25 +186,6 @@ class MesaSIREpidemicModel(mesa.Model):
         agent_reporters = ({"state": "state", "x": "x", "y": "y"} if collect_spatial else None)
         self.datacollector = DataCollector(model_reporters=model_reporters,
                                            agent_reporters=agent_reporters)
-
-    @staticmethod
-    def _validate_parameters(seed, tau, alpha, n_agents, world_size,
-                             initial_infected, average_contacts, beta_spatial,
-                             beta_network, transmission_radius, dt, dispersion) -> None:
-        # Same checks as the ECS model (duplicated on purpose: importing the ECS
-        # module here would load esper and pollute the memory of a Mesa-only run).
-        if seed is not None and not isinstance(seed, int):
-            raise TypeError("seed must be an integer or None")
-        if n_agents < 1 or initial_infected < 0 or initial_infected > n_agents:
-            raise ValueError("n_agents must be positive and initial_infected must be in [0, n_agents]")
-        if world_size <= 0 or average_contacts < 0 or transmission_radius < 0 or dt <= 0:
-            raise ValueError("world_size and dt must be positive; contacts and radius cannot be negative")
-        if tau <= 0 or dispersion <= 0:
-            raise ValueError("tau and dispersion must be positive")
-        if alpha is not None and alpha <= 0:
-            raise ValueError("alpha must be positive")
-        if not 0 <= beta_spatial <= 1 or not 0 <= beta_network <= 1:
-            raise ValueError("transmission probabilities must be between 0 and 1")
 
     # ------------------------------------------------------------------
     # Initialisation
@@ -133,7 +197,7 @@ class MesaSIREpidemicModel(mesa.Model):
         """(viral_load, recovery_time) of a new infection."""
         return self.random.uniform(*NEW_VIRAL_LOAD_RANGE), self._draw_recovery_time()
 
-    def _populate(self, counts: dict[State, int]) -> None:
+    def _populate(self, counts: dict[HealthState, int]) -> None:
         n: int = self.n_agents
         people = Person.create_agents(
             self, n, self.space,
@@ -143,19 +207,19 @@ class MesaSIREpidemicModel(mesa.Model):
             immunity=self.rng.uniform(*IMMUNITY_RANGE, n).tolist()).to_list()
         order: np.ndarray = self.rng.permutation(n)
         cursor = 0
-        for state in (State.Infected, State.Recovered, State.Dead):
+        for state in (HealthState.INFECTED, HealthState.RECOVERED, HealthState.DEAD):
             for i in order[cursor:cursor + counts[state]]:
                 person: Person = people[i]
-                if state is State.Infected:
+                if state is HealthState.INFECTED:
                     person.infect(self.random.uniform(*INITIAL_VIRAL_LOAD_RANGE),
                                   self._draw_recovery_time())
                     person.days_infected = INITIAL_DAYS_INFECTED  # seeding day, as in the ECS
                     self.seed_locations.append((person.x, person.y))
-                elif state is State.Recovered:
-                    person.state = State.Recovered
+                elif state is HealthState.RECOVERED:
+                    person.state = HealthState.RECOVERED
                     person.immunity = IMMUNITY_AFTER_RECOVERY
                 else:
-                    person.state = State.Dead
+                    person.state = HealthState.DEAD
                     person.mobility = 0.0
             cursor += counts[state]
 
@@ -168,23 +232,31 @@ class MesaSIREpidemicModel(mesa.Model):
             if k > 0:
                 chosen: np.ndarray = self.rng.choice(n - 1, size=k, replace=False)
                 chosen += chosen >= i  # skip the agent itself
-                person.contacts = [people[j] for j in chosen]
-                person.contact_strength = self.rng.uniform(*RANDOM_NETWORK_STRENGTH_RANGE, k).tolist()
+                strengths = self.rng.uniform(*RANDOM_NETWORK_STRENGTH_RANGE, k)
+                self.contact_graph.add_weighted_edges_from(
+                    (person, people[j], float(weight))
+                    for j, weight in zip(chosen, strengths)
+                )
 
     def _build_similarity_network(self, dispersion: float, alive_only: bool) -> None:
         """Spatial + age homophily network: every (living) agent draws a negative-binomial
         number of contacts (``Person.choose_contacts``)."""
         people: list[Person] = self.space.active_agents
         ages: np.ndarray = np.asarray(self.space.agents.get("age"), dtype=float)
-        alive: np.ndarray = (np.asarray([p.state is not State.Dead for p in people])
+        alive: np.ndarray = (np.asarray([p.state is not HealthState.DEAD for p in people])
                              if alive_only else np.ones(len(people), dtype=bool))
         wanted: np.ndarray = self.rng.negative_binomial(
             dispersion, dispersion / (dispersion + self.average_contacts), len(people))
         for person, k, is_alive in zip(people, wanted, alive):
             if is_alive:
-                person.contacts, person.contact_strength = [], []
                 if k > 0:
-                    person.choose_contacts(int(k), ages, alive, self.alpha, self.tau)
+                    contacts, strengths = person.choose_contacts(
+                        int(k), ages, alive, self.alpha, self.tau
+                    )
+                    self.contact_graph.add_weighted_edges_from(
+                        (person, contact, strength)
+                        for contact, strength in zip(contacts, strengths)
+                    )
 
     # ------------------------------------------------------------------
     # Systems
@@ -195,17 +267,18 @@ class MesaSIREpidemicModel(mesa.Model):
     def _rewire_network(self) -> None:
         """Dynamic rewiring every ``rewire_every`` steps (ECS ``NetworkRewiringystem``)."""
         if self.steps % self.rewire_every == 0:
+            self.contact_graph.clear_edges()
             self._build_similarity_network(REWIRING_DISPERSION, alive_only=True)
 
     def _spatial_transmission_hazard(self) -> None:
         """Hazard-based spatial transmission (ECS ``SpatialTransmissionSystemNew``): every
         infectious source adds its hazard to the susceptibles within the radius."""
         for source in self.agents.select(
-                lambda a: a.state is State.Infected and a.infectious and not a.quarantined):
+                lambda a: a.state is HealthState.INFECTED and a.infectious and not a.quarantined):
             base: float = self.beta_spatial * source.viral_load / 1000
             neighbors, _ = source.get_neighbors_in_radius(radius=self.transmission_radius)
             for target in neighbors:
-                if target.state is State.Susceptible:
+                if target.state is HealthState.SUSCEPTIBLE:
                     target.hazard += base * (1 - target.immunity)
 
     def _spatial_transmission_immediate(self) -> None:
@@ -213,19 +286,20 @@ class MesaSIREpidemicModel(mesa.Model):
         are filtered on their state when each source acts, so a person infected by an earlier
         source of the same pass is not drawn again."""
         for source in self.agents.select(
-                lambda a: a.state is State.Infected and a.infectious and not a.quarantined):
+                lambda a: a.state is HealthState.INFECTED and a.infectious and not a.quarantined):
             base: float = self.beta_spatial * source.viral_load / 1000
             neighbors, _ = source.get_neighbors_in_radius(radius=self.transmission_radius)
-            for target in [t for t in neighbors if t.state is State.Susceptible]:
+            for target in [t for t in neighbors if t.state is HealthState.SUSCEPTIBLE]:
                 if self.random.random() < base * (1 - target.immunity):
                     target.infect(*self._draw_new_infection())
 
     def _network_transmission_hazard(self) -> None:
         """Hazard-based network transmission (ECS ``NetworkTransmissionSystemNew``)."""
-        for source in self.agents.select(lambda a: a.state is State.Infected and a.infectious):
+        for source in self.agents.select(lambda a: a.state is HealthState.INFECTED and a.infectious):
             adjusted: float = self.beta_network * source.transmission_modifier()
-            for contact, strength in zip(source.contacts, source.contact_strength):
-                if contact.state is State.Susceptible:
+            for contact in self.contact_graph.successors(source):
+                if contact.state is HealthState.SUSCEPTIBLE:
+                    strength = self.contact_graph[source][contact]["weight"]
                     hazard: float = adjusted * strength * (1 - contact.immunity) * source.viral_load / 1000
                     if hazard > 0:
                         contact.hazard += hazard
@@ -233,18 +307,19 @@ class MesaSIREpidemicModel(mesa.Model):
     def _network_transmission_immediate(self) -> None:
         """Sequential network transmission (ECS ``NetworkTransmissionSystem``). The state of a
         contact is read when the draw is made: it may have been infected earlier in the pass."""
-        for source in self.agents.select(lambda a: a.state is State.Infected and a.infectious
-                                         and a.contacts):
+        for source in self.agents.select(lambda a: a.state is HealthState.INFECTED and a.infectious
+                                         and self.contact_graph.out_degree(a) > 0):
             adjusted: float = self.beta_network * source.transmission_modifier()
-            for contact, strength in zip(source.contacts, source.contact_strength):
-                if contact.state is State.Susceptible:
+            for contact in self.contact_graph.successors(source):
+                strength = self.contact_graph[source][contact]["weight"]
+                if contact.state is HealthState.SUSCEPTIBLE:
                     probability: float = adjusted * strength * (1 - contact.immunity) * source.viral_load / 1000
                     if self.random.random() < probability:
                         contact.infect(*self._draw_new_infection())
 
     def _resolve_infections(self) -> None:
         """Hazard -> probability p = 1 - exp(-hazard * dt) (ECS ``InfectionResolutionSystem``)."""
-        for person in self.agents.select(lambda a: a.state is State.Susceptible and a.hazard > 0):
+        for person in self.agents.select(lambda a: a.state is HealthState.SUSCEPTIBLE and a.hazard > 0):
             probability: float = 1 - math.exp(-person.hazard * self.dt)
             if self.random.random() < probability:
                 person.infect(*self._draw_new_infection())
@@ -269,15 +344,15 @@ class MesaSIREpidemicModel(mesa.Model):
             self._network_transmission_immediate()
         if self.spatial_new or self.network_new:
             self._resolve_infections()
-        self.agents.select(lambda a: a.state is State.Infected).do("progress_disease")
+        self.agents.select(lambda a: a.state is HealthState.INFECTED).do("progress_disease")
         if self.enable_quarantine:
-            self.agents.select(lambda a: a.state is State.Infected and a.infectious
+            self.agents.select(lambda a: a.state is HealthState.INFECTED and a.infectious
                                and not a.quarantined).do("try_quarantine", QUARANTINE_COMPLIANCE)
             self.agents.select(lambda a: a.quarantined).do("tick_quarantine")
 
         self._counts = self.agents.groupby("state").count()
         self.datacollector.collect(self)
-        if self._counts.get(State.Infected, 0) == 0:
+        if self._counts.get(HealthState.INFECTED, 0) == 0:
             self.running = False  # same stopping rule as the ECS
 
     def run(self, max_steps: int) -> None:

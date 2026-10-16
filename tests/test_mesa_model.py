@@ -7,8 +7,10 @@ import sys
 import numpy as np
 import pytest
 
+from epidemic_sim.config import SimulationConfig
+from epidemic_sim.disease_model import DiseaseModelConfig, HealthState
 from epidemic_sim.mesa import MesaSIREpidemicModel
-from epidemic_sim.mesa.setup import State, health_counts
+from epidemic_sim.mesa.model import health_counts
 
 HAZARD = dict(spatial_new=True, network_new=True)
 
@@ -59,36 +61,36 @@ def test_positions_are_held_by_the_mesa_space_and_stay_in_the_world():
 def test_initial_health_counts_and_proportions():
     model = MesaSIREpidemicModel(seed=5, n_agents=200, initial_infected=8, **HAZARD)
     states = [a.state for a in model.agents]
-    assert states.count(State.Infected) == 8 and states.count(State.Susceptible) == 192
+    assert states.count(HealthState.INFECTED) == 8 and states.count(HealthState.SUSCEPTIBLE) == 192
     mixed = MesaSIREpidemicModel(
         seed=5, n_agents=200, **HAZARD,
-        initial_proportions={State.Susceptible: 0.8, State.Infected: 0.1,
-                             State.Recovered: 0.05, State.Dead: 0.05})
+        initial_proportions={HealthState.SUSCEPTIBLE: 0.8, HealthState.INFECTED: 0.1,
+                             HealthState.RECOVERED: 0.05, HealthState.DEAD: 0.05})
     states = [a.state for a in mixed.agents]
-    assert (states.count(State.Susceptible), states.count(State.Infected),
-            states.count(State.Recovered), states.count(State.Dead)) == (160, 20, 10, 10)
-    assert all(a.mobility == 0 for a in mixed.agents if a.state is State.Dead)
+    assert (states.count(HealthState.SUSCEPTIBLE), states.count(HealthState.INFECTED),
+            states.count(HealthState.RECOVERED), states.count(HealthState.DEAD)) == (160, 20, 10, 10)
+    assert all(a.mobility == 0 for a in mixed.agents if a.state is HealthState.DEAD)
     with pytest.raises(ValueError):
-        health_counts(100, 0, {State.Susceptible: 0.5, State.Infected: 0.2})
+        health_counts(100, 0, {HealthState.SUSCEPTIBLE: 0.5, HealthState.INFECTED: 0.2})
 
 
 def test_days_infected_counter_is_incremented_by_the_model_step():
     model = MesaSIREpidemicModel(seed=6, n_agents=30, world_size=500, initial_infected=1,
                                  beta_spatial=0.0, beta_network=0.0, **HAZARD)
-    person = next(a for a in model.agents if a.state is State.Infected)
+    person = next(a for a in model.agents if a.state is HealthState.INFECTED)
     person.recovery_time = 100
     start = person.days_infected
     for _ in range(3):
         model.step()
     assert person.days_infected == start + 3
-    fresh = next(a for a in model.agents if a.state is State.Susceptible)
+    fresh = next(a for a in model.agents if a.state is HealthState.SUSCEPTIBLE)
     fresh.infect(800.0, 10)
     assert fresh.days_infected == 0  # infect() takes no counter argument
 
 
 def test_quarantine_reduces_mobility_and_restores_it():
     model = MesaSIREpidemicModel(seed=5, n_agents=20, world_size=50, initial_infected=1, **HAZARD)
-    person = next(a for a in model.agents if a.state is State.Infected)
+    person = next(a for a in model.agents if a.state is HealthState.INFECTED)
     original = person.mobility
     person.try_quarantine(compliance=1.0)  # certain to enter quarantine
     assert person.quarantined
@@ -151,7 +153,7 @@ def test_choose_contacts_is_the_successive_weighted_sample():
     alive = np.ones(len(ages), dtype=bool)
     me = people[0]
     k, alpha, tau = 2, 8.0, 15.0
-    dist, order = model.space.calculate_distances(me.position)
+    dist, _ = model.space.calculate_distances(me.position)
     w = np.exp(-dist / alpha - np.abs(ages - me.age) / tau)
     w[me.index] = 0.0
     expected = np.zeros(len(w))
@@ -165,7 +167,25 @@ def test_choose_contacts_is_the_successive_weighted_sample():
     counts = np.zeros(len(w))
     n_rep = 20000
     for _ in range(n_rep):
-        me.choose_contacts(k, ages, alive, alpha, tau)
-        for c in me.contacts:
+        contacts, _ = me.choose_contacts(k, ages, alive, alpha, tau)
+        for c in contacts:
             counts[c.index] += 1
     assert np.allclose(counts / n_rep, expected, atol=0.015)
+
+
+def test_model_accepts_shared_configs():
+    simulation = SimulationConfig(seed=42, n_agents=30, world_size=80, initial_infected=2)
+    disease = DiseaseModelConfig(
+        beta_spatial=0.0,
+        beta_network=0.0,
+        spatial_new=True,
+        network_new=True,
+    )
+    model = MesaSIREpidemicModel(
+        simulation_config=simulation,
+        disease_model_config=disease,
+    )
+    assert model.seed == 42
+    assert model.n_agents == 30
+    assert model.world_size == 80
+    assert model.spatial_new and model.network_new

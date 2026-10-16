@@ -63,7 +63,7 @@ class Entity:
 class SIREpidemicModel:
     def __init__(
         self,
-        seed: int,
+        seed: int | None = None,
         tau: float = _DEFAULT_DISEASE_MODEL_CONFIG.tau,
         alpha: float | None = _DEFAULT_DISEASE_MODEL_CONFIG.alpha,
         n_agents: int = _DEFAULT_SIMULATION_CONFIG.n_agents,
@@ -84,13 +84,52 @@ class SIREpidemicModel:
         ),
         dt: float = _DEFAULT_DISEASE_MODEL_CONFIG.dt,
         dispersion: float = _DEFAULT_DISEASE_MODEL_CONFIG.dispersion,
+        simulation_config: SimulationConfig | None = None,
+        disease_model_config: DiseaseModelConfig | None = None,
     ):
+        """Initialize from shared configs or legacy keyword parameters.
 
-    # Initialize model parameters
-        self._validate_parameters(seed, tau, alpha, n_agents, world_size,
-                                  initial_infected, average_contacts,
-                                  beta_spatial, beta_network,
-                                  transmission_radius, dt, dispersion)
+        A supplied config takes precedence over legacy parameters in its group.
+        """
+        simulation_config = simulation_config or SimulationConfig(
+            seed=seed,
+            n_agents=n_agents,
+            world_size=world_size,
+            initial_infected=initial_infected,
+            average_contacts=average_contacts,
+        )
+        disease_model_config = disease_model_config or DiseaseModelConfig(
+            beta_spatial=beta_spatial,
+            beta_network=beta_network,
+            transmission_radius=transmission_radius,
+            dt=dt,
+            alpha=alpha,
+            tau=tau,
+            dispersion=dispersion,
+            spatial_new=bool(spatial_new),
+            network_new=bool(network_new),
+            space_attribute_similarity=bool(space_attribute_similarity),
+            enable_quarantine=enable_quarantine,
+        )
+        validate_all(simulation_config, disease_model_config)
+        self.simulation_config = simulation_config
+        self.disease_model_config = disease_model_config
+        seed = simulation_config.seed
+        n_agents = simulation_config.n_agents
+        world_size = simulation_config.world_size
+        initial_infected = simulation_config.initial_infected
+        average_contacts = simulation_config.average_contacts
+        beta_spatial = disease_model_config.beta_spatial
+        beta_network = disease_model_config.beta_network
+        enable_quarantine = disease_model_config.enable_quarantine
+        transmission_radius = disease_model_config.transmission_radius
+        spatial_new = disease_model_config.spatial_new
+        network_new = disease_model_config.network_new
+        space_attribute_similarity = disease_model_config.space_attribute_similarity
+        dt = disease_model_config.dt
+        dispersion = disease_model_config.dispersion
+        tau = disease_model_config.tau
+        alpha = disease_model_config.alpha
         self.n_agents = n_agents
         self.world_size = world_size
         self.initial_infected = initial_infected
@@ -138,29 +177,6 @@ class SIREpidemicModel:
         self.time_series_data: defaultdict[str, List[int]] = defaultdict(list) # Initialize time series data storage
 
         self.spatial_location_series_data: defaultdict[str, List[tuple[int, float, float]]] = defaultdict(list) # Initialize spatial location series data storage
-
-    @staticmethod
-    def _validate_parameters(seed, tau, alpha, n_agents, world_size,
-                             initial_infected, average_contacts, beta_spatial,
-                             beta_network, transmission_radius, dt, dispersion):
-        validate_all(
-            SimulationConfig(
-                n_agents=n_agents,
-                world_size=world_size,
-                initial_infected=initial_infected,
-                average_contacts=average_contacts,
-                seed=seed,
-            ),
-            DiseaseModelConfig(
-                beta_spatial=beta_spatial,
-                beta_network=beta_network,
-                transmission_radius=transmission_radius,
-                dt=dt,
-                alpha=alpha,
-                tau=tau,
-                dispersion=dispersion,
-            ),
-        )
 
     def _register_systems(self, spatial_new: bool, network_new: bool,
                           enable_quarantine: bool):

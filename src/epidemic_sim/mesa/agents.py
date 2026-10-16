@@ -14,8 +14,13 @@ from typing import TYPE_CHECKING
 import numpy as np
 from mesa.experimental.continuous_space import ContinuousSpace, ContinuousSpaceAgent
 
-from .setup import (IMMUNITY_AFTER_RECOVERY, QUARANTINE_DURATION, QUARANTINE_EFFECT,
-                    RECOVERY_PROBABILITY_RANGE, State)
+from ..disease_model import (
+    IMMUNITY_AFTER_RECOVERY,
+    QUARANTINE_DURATION,
+    QUARANTINE_EFFECT,
+    RECOVERY_PROBABILITY_RANGE,
+    HealthState,
+)
 
 if TYPE_CHECKING:
     from .model import MesaSIREpidemicModel
@@ -36,7 +41,7 @@ class Person(ContinuousSpaceAgent):
         self.mobility: float = mobility
         self.immunity: float = immunity
 
-        self.state: State = State.Susceptible
+        self.state: HealthState = HealthState.SUSCEPTIBLE
 
         # Infection (counter incremented at every step spent infected, see progress_disease)
         self.viral_load: float = 0.0
@@ -44,10 +49,6 @@ class Person(ContinuousSpaceAgent):
         self.infectious: bool = False
         self.recovery_time: int = 0
         self.hazard: float = 0.0  # accumulated infection hazard of the current step
-
-        # Contact network: references to other Person objects and tie strengths
-        self.contacts: list["Person"] = []
-        self.contact_strength: list[float] = []
 
         # Quarantine
         self.quarantined: bool = False
@@ -70,7 +71,7 @@ class Person(ContinuousSpaceAgent):
     def infect(self, viral_load: float, recovery_time: int) -> None:
         """Susceptible -> Infected. The day counter starts at 0 and is incremented by
         ``progress_disease`` at every step spent in the Infected state."""
-        self.state = State.Infected
+        self.state = HealthState.INFECTED
         self.viral_load = viral_load
         self.days_infected = 0
         self.infectious = True
@@ -92,7 +93,7 @@ class Person(ContinuousSpaceAgent):
             self.position = np.clip(self.position + step, 0, self.space.dimensions[:, 1])
 
     def choose_contacts(self, wanted: int, ages: np.ndarray, alive: np.ndarray,
-                        alpha: float, tau: float) -> None:
+                        alpha: float, tau: float) -> tuple[list["Person"], list[float]]:
         """Draw ``wanted`` contacts without replacement, one after the other, with
         probability proportional to w_ij = exp(-d_ij/alpha) * exp(-|age_i - age_j|/tau)
         over the living others. The tie strength is the raw similarity w_ij.
@@ -106,28 +107,27 @@ class Person(ContinuousSpaceAgent):
         total: float = weights.sum()
         candidates: int = int(np.count_nonzero(weights))
         if total == 0 or candidates == 0:
-            return
+            return [], []
         chosen: np.ndarray = self.model.rng.choice(
             len(weights), size=min(wanted, candidates), replace=False, p=weights / total)
-        self.contacts = [people[j] for j in chosen]
-        self.contact_strength = weights[chosen].tolist()
+        return [people[j] for j in chosen], weights[chosen].tolist()
 
     def progress_disease(self) -> None:
         """Infected: count one more day, then recover or die (ECS ``DiseaseProgressionSystem``)."""
-        if self.state is not State.Infected:
+        if self.state is not HealthState.INFECTED:
             return
         self.days_infected += 1
         if self.days_infected >= self.recovery_time:
             random = self.model.random
             recovers: bool = random.random() < random.uniform(*RECOVERY_PROBABILITY_RANGE)
             if recovers:
-                self.state = State.Recovered
+                self.state = HealthState.RECOVERED
                 self.immunity = IMMUNITY_AFTER_RECOVERY
                 if self.quarantined:  # a recovered agent leaves quarantine at once
                     self.mobility = self.original_mobility
                     self.quarantined = False
             else:
-                self.state = State.Dead
+                self.state = HealthState.DEAD
                 self.mobility = 0.0
 
     def try_quarantine(self, compliance: float) -> None:
@@ -144,6 +144,6 @@ class Person(ContinuousSpaceAgent):
         """One more day in quarantine; release when the duration is over."""
         self.days_in_quarantine += 1
         if self.days_in_quarantine >= self.quarantine_duration:
-            if self.state is not State.Dead:
+            if self.state is not HealthState.DEAD:
                 self.mobility = self.original_mobility
             self.quarantined = False
