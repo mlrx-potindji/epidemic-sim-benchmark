@@ -124,6 +124,28 @@ def test_same_output_format_and_conservation():
     ecs.clean_up()
 
 
+def test_ecs_respects_spatial_collection_setting():
+    for collect_spatial in (False, True):
+        model = build_ecs(
+            simulation_config=SimulationConfig(
+                seed=12,
+                n_agents=60,
+                world_size=100,
+                initial_infected=3,
+                max_steps=2,
+                collect_spatial=collect_spatial,
+            ),
+            disease_model_config=DiseaseModelConfig(),
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            model.run(2)
+
+        assert len(model.time_series_data["time"]) == 2
+        spatial_points = sum(map(len, model.spatial_location_series_data.values()))
+        assert spatial_points == (120 if collect_spatial else 0)
+        model.clean_up()
+
+
 def test_mesa_contact_graph_is_directed_and_weighted():
     model = MesaSIREpidemicModel(seed=21, **PARAMS)
     assert model.contact_graph.is_directed()

@@ -65,11 +65,18 @@ parity rather than being accepted as a match.
 ## 3. Measure runtime
 
 The runtime command records model construction and simulation separately,
-without per-system timing instrumentation. Each repeat uses fresh models and
-counterbalanced ECS-first/Mesa-first order; warm-ups are excluded from recorded
-measurements. Spatial trajectory collection is disabled for both
-implementations, while their normal epidemic time-series collection remains on.
-Reports include raw measurements, medians and IQRs, a paired median
+without per-system timing instrumentation. Protocol v3 disables spatial-history
+collection in both models and advances exactly the requested number of updates,
+even if one implementation reaches extinction first. After extinction, each
+model continues movement, network rewiring, and time-series collection for the
+remaining timed steps; this is a fixed-workload benchmark, not a time-to-end
+comparison. Each repeat uses fresh models and counterbalanced ECS-first/Mesa-
+first order; warm-ups are excluded from recorded measurements. Normal epidemic
+time-series collection remains on in both implementations.
+Reports tagged protocol version 3 are the corrected runtime comparison. Older
+version-1 and version-2 timing reports predate equal spatial-history settings
+and fixed-step execution; the plotter labels them separately and does not pool
+them with v3. Reports include raw measurements, medians and IQRs, a paired median
 ECS/Mesa simulation-time ratio with a bootstrap 95% interval, the full resolved
 model configuration, package versions, CPU model/availability, OS, git revision,
 and whether the worktree was dirty.

@@ -132,6 +132,7 @@ class SIREpidemicModel:
         alpha = disease_model_config.alpha
         self.n_agents = n_agents
         self.world_size = world_size
+        self.collect_spatial = simulation_config.collect_spatial
         self.initial_infected = initial_infected
         self.average_contacts = average_contacts
         self.beta_spatial = beta_spatial
@@ -481,7 +482,8 @@ class SIREpidemicModel:
         esper.process()
 
         self._collect_data()  # Collect data after processing systems
-        self.get_spatial_data()  # Collect spatial data after processing systems
+        if self.collect_spatial:
+            self.get_spatial_data()  # Collect spatial data after processing systems
         self.step_count += 1 # Increment the step count after processing systems and collecting data
 
     # --------------------------------------------------

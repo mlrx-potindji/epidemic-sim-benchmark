@@ -69,6 +69,7 @@ def group_runtime_reports(reports: list[tuple[Path, dict[str, Any]]]) -> list[di
             environment.get("logical_cpu_count", environment.get("cpu_count")),
             environment.get("available_cpu_count"),
             json.dumps(environment.get("packages", {}), sort_keys=True),
+            config.get("benchmark_protocol_version", "legacy"),
         )
         group = groups.setdefault(key, {"key": key, "measurements": [], "files": []})
         group["measurements"].extend(report["measurements"])
@@ -125,16 +126,20 @@ def group_parity_reports(reports: list[tuple[Path, dict[str, Any]]]) -> list[dic
 def plot_runtime(reports: list[tuple[Path, dict[str, Any]]], output: Path) -> None:
     groups = group_runtime_reports(reports)
     scenario_names = {
-        "hazard_similarity": "similarity",
-        "hazard_quarantine": "quarantine",
-        "hazard_random": "random hazard",
-        "sequential_random": "sequential",
+        "hazard_similarity": "sim",
+        "hazard_quarantine": "quar",
+        "hazard_random": "rand",
+        "sequential_random": "seq",
     }
     labels = []
     for group in groups:
         scenario = scenario_names.get(group["key"][0], group["key"][0])
         repeats = sum(row["framework"] == "ecs" for row in group["measurements"])
-        labels.append(f"{scenario}\nN={group['key'][1]}\n{group['key'][3]} steps, n={repeats}")
+        version_label = group["key"][-1]
+        protocol = "legacy" if version_label == "legacy" else f"v{version_label}"
+        labels.append(
+            f"{scenario} {protocol}\nN{group['key'][1]}, {group['key'][3]}s\n{repeats} reps"
+        )
     centers = list(range(1, len(groups) + 1))
     figure, axes = plt.subplots(1, 2, figsize=(max(10, 2.7 * len(groups)), 5.5))
     for axis, field, title in (
@@ -152,7 +157,7 @@ def plot_runtime(reports: list[tuple[Path, dict[str, Any]]], output: Path) -> No
         axis.set_title(title)
         axis.set_ylabel("Seconds (log scale)")
         axis.set_yscale("log")
-        axis.set_xticks(centers, labels, fontsize=9)
+        axis.set_xticks(centers, labels, fontsize=8)
         axis.grid(axis="y", alpha=0.25)
     figure.legend(
         handles=[Patch(facecolor=COLORS[name], label=name.upper()) for name in FRAMEWORKS],
@@ -162,7 +167,7 @@ def plot_runtime(reports: list[tuple[Path, dict[str, Any]]], output: Path) -> No
         bbox_to_anchor=(0.5, 0.92),
     )
     figure.suptitle("ECS and Mesa runtime comparison", y=0.99, fontsize=14)
-    figure.subplots_adjust(top=0.78, bottom=0.24, wspace=0.25)
+    figure.subplots_adjust(top=0.78, bottom=0.31, wspace=0.25)
     figure.savefig(output, dpi=160, bbox_inches="tight")
     plt.close(figure)
 

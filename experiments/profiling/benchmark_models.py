@@ -25,8 +25,17 @@ from epidemic_sim.ecs.simulation import SIREpidemicModel
 from epidemic_sim.mesa import MesaSIREpidemicModel
 
 
-def run_once(framework: str, simulation_config, disease_model_config, steps: int) -> tuple[float, float]:
-    """Return construction and simulation wall time for one fresh model."""
+def advance_fixed_steps(framework: str, model, steps: int) -> int:
+    """Advance exactly ``steps`` updates, even if the epidemic becomes extinct."""
+    for _ in range(steps):
+        if framework == "mesa":
+            model.running = True
+        model.step()
+    return model.step_count if framework == "ecs" else model.steps
+
+
+def run_once(framework: str, simulation_config, disease_model_config, steps: int) -> tuple[float, float, int]:
+    """Return construction time, fixed-step runtime, and completed updates."""
     constructor = SIREpidemicModel if framework == "ecs" else MesaSIREpidemicModel
     start = time.perf_counter()
     with contextlib.redirect_stdout(io.StringIO()):
@@ -38,13 +47,13 @@ def run_once(framework: str, simulation_config, disease_model_config, steps: int
 
     start = time.perf_counter()
     with contextlib.redirect_stdout(io.StringIO()):
-        model.run(steps)
+        completed_steps = advance_fixed_steps(framework, model, steps)
     simulation_seconds = time.perf_counter() - start
 
     if framework == "ecs":
         model.clean_up()
         esper.switch_world("default")
-    return construction_seconds, simulation_seconds
+    return construction_seconds, simulation_seconds, completed_steps
 
 
 def summarize_measurements(measurements: list[dict], seed: int) -> dict:
@@ -79,7 +88,7 @@ def summarize_measurements(measurements: list[dict], seed: int) -> dict:
             for _ in range(10_000)
         ])
         paired_speedup = {
-            "definition": "ECS simulation time / Mesa simulation time; >1 favors Mesa",
+            "definition": "ECS simulation time / Mesa simulation time for fixed steps; >1 favors Mesa",
             "n_pairs": int(len(speedups)),
             "median": float(np.median(speedups)),
             "ci_level": 0.95,
@@ -142,7 +151,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     for repeat, order in enumerate(balanced_framework_orders(args.repeats, order_rng)):
         seed = args.seed + repeat
         for position, framework in enumerate(order):
-            construction_seconds, simulation_seconds = run_once(
+            construction_seconds, simulation_seconds, completed_steps = run_once(
                 framework,
                 replace(simulation_config, seed=seed),
                 benchmark.disease_model,
@@ -156,6 +165,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 "order_position": position,
                 "construction_seconds": construction_seconds,
                 "simulation_seconds": simulation_seconds,
+                "completed_steps": completed_steps,
                 "total_seconds": construction_seconds + simulation_seconds,
             })
 
@@ -163,6 +173,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     output = {
         "kind": "runtime_benchmark",
         "config": {
+            "benchmark_protocol_version": 3,
             "scenario": args.scenario,
             "repeats": args.repeats,
             "warmups": args.warmups,

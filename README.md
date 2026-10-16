@@ -96,7 +96,8 @@ uv run python -m experiments.plot_benchmark_results --runtime results/runtime_*.
 ```
 
 The runtime command saves repeat-level JSON; the plot command produces
-`results/runtime_comparison.png`. The Mesa model is also available through
+`results/runtime_comparison.png`. The current runtime protocol disables spatial
+history in both implementations and runs an equal fixed number of steps. The Mesa model is also available through
 `scripts/run_mesa.py`.
 
 Both model constructors accept the shared configs. The older keyword-based

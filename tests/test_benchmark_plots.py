@@ -59,6 +59,30 @@ def test_runtime_report_accepts_resolved_nested_config():
     assert groups[0]["key"][1:4] == (300, 200, 50)
 
 
+def test_runtime_reports_from_different_protocol_versions_are_not_pooled():
+    reports = []
+    for version in (None, 2):
+        config = {
+            "scenario": "hazard_similarity",
+            "n_agents": 300,
+            "world_size": 200,
+            "steps": 50,
+            "collect_spatial": False,
+        }
+        if version is not None:
+            config["benchmark_protocol_version"] = version
+        reports.append((
+            Path(f"protocol-{version}.json"),
+            {
+                "config": config,
+                "environment": {"platform": "linux"},
+                "measurements": [],
+            },
+        ))
+
+    assert len(group_runtime_reports(reports)) == 2
+
+
 def test_parity_reports_pool_replicates_and_both_plots_render(tmp_path):
     reports = []
     for filename, scenario, offset, first_seed in (
