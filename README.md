@@ -116,6 +116,9 @@ model = MesaSIREpidemicModel(
 
 Mesa stores its directed contact network as a weighted NetworkX graph; the
 graph is the source of truth for contact transmission and rewiring.
+Both implementations use a single seeded NumPy generator for simulation
+randomness. This gives repeatable runs per implementation and seed; it does
+not pair or synchronize random draws between ECS and Mesa.
 
 ## Contributing
 

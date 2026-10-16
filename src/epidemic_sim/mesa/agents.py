@@ -118,8 +118,8 @@ class Person(ContinuousSpaceAgent):
             return
         self.days_infected += 1
         if self.days_infected >= self.recovery_time:
-            random = self.model.random
-            recovers: bool = random.random() < random.uniform(*RECOVERY_PROBABILITY_RANGE)
+            rng = self.model.rng
+            recovers: bool = rng.random() < rng.uniform(*RECOVERY_PROBABILITY_RANGE)
             if recovers:
                 self.state = HealthState.RECOVERED
                 self.immunity = IMMUNITY_AFTER_RECOVERY
@@ -132,7 +132,7 @@ class Person(ContinuousSpaceAgent):
 
     def try_quarantine(self, compliance: float) -> None:
         """Infectious agents enter quarantine with probability ``compliance``."""
-        if self.model.random.random() < compliance:
+        if self.model.rng.random() < compliance:
             self.quarantined = True
             self.quarantine_compliance = compliance
             self.quarantine_duration = QUARANTINE_DURATION

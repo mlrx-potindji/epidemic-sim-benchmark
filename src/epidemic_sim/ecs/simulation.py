@@ -256,12 +256,12 @@ class SIREpidemicModel:
             if num_contacts > 0:
                 possible_contacts = [x for x in self.entity_iDs if x != entity] 
                 num_contacts = min(num_contacts, len(possible_contacts))
-                contacts = self.rng.python.sample(possible_contacts, num_contacts)
-
-                strengths = [
-                    self.rng.python.uniform(*RANDOM_NETWORK_STRENGTH_RANGE)
-                    for _ in range(num_contacts)
-                ]
+                contacts = self.rng.numpy.choice(
+                    possible_contacts, size=num_contacts, replace=False
+                ).tolist()
+                strengths = self.rng.numpy.uniform(
+                    *RANDOM_NETWORK_STRENGTH_RANGE, size=num_contacts
+                ).tolist()
 
                 esper.add_component(entity, ContactNetwork(contacts = contacts, 
                                                            contact_strength = strengths))
@@ -348,8 +348,6 @@ class SIREpidemicModel:
         dispersion = dispersion
 
         for entity in self.entity_iDs:
-            #num_contacts = max(0, int(np.random.poisson(self.average_contacts)))
-            
             # dispersion parameter
             num_contacts = max(0, int(self.rng.numpy.negative_binomial(dispersion, dispersion / (dispersion + self.average_contacts))))
             if num_contacts == 0:
@@ -435,7 +433,11 @@ class SIREpidemicModel:
         - None (components are modified directly on entities in the world).
         """
         
-        entities_to_infect = self.rng.python.sample(self.entity_iDs, min(self.initial_infected, len(self.entity_iDs)))
+        entities_to_infect = self.rng.numpy.choice(
+            self.entity_iDs,
+            size=min(self.initial_infected, len(self.entity_iDs)),
+            replace=False,
+        ).tolist()
         
 
         for entity in entities_to_infect:
@@ -449,7 +451,7 @@ class SIREpidemicModel:
                     recovery_time=max(
                         1,
                         int(
-                            self.rng.python.normalvariate(
+                            self.rng.numpy.normal(
                                 RECOVERY_TIME_MEAN, RECOVERY_TIME_SD
                             )
                         ),

@@ -140,4 +140,6 @@ def test_ecs_accepts_shared_configs():
     assert model.n_agents == 20
     assert model.world_size == 80
     assert model.seed == 21
+    assert isinstance(model.rng.numpy, np.random.Generator)
+    assert not hasattr(model.rng, "python")
     model.clean_up()

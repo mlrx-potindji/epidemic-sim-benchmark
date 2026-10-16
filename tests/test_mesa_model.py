@@ -31,6 +31,13 @@ def test_model_is_reproducible():
     assert runs[0] == runs[1]
 
 
+def test_simulation_draws_use_only_the_numpy_generator():
+    model = MesaSIREpidemicModel(seed=11, n_agents=30, initial_infected=2, **HAZARD)
+    python_rng_state = model.random.getstate()
+    model.run_for(3)
+    assert model.random.getstate() == python_rng_state
+
+
 def test_different_seeds_give_different_runs():
     kwargs = dict(n_agents=150, world_size=150, initial_infected=5, **HAZARD)
     a = MesaSIREpidemicModel(seed=1, **kwargs)

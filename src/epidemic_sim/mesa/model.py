@@ -8,7 +8,7 @@ It is written with Mesa's own tools only, the way a Mesa user would write it:
   (``select`` / ``get`` / ``groupby`` / ``do``);
 * positions live in the Mesa continuous space; contacts within the transmission radius are
   found with ``Person.get_neighbors_in_radius`` and distances with ``space.calculate_distances``;
-* the random numbers are ``model.rng`` (numpy) and ``model.random`` (stdlib);
+* stochastic model draws use ``model.rng`` (NumPy);
 * ``DataCollector`` records the series; ``Model.run_until`` advances the model and
   ``Model.steps`` is the step counter.
 
@@ -145,7 +145,7 @@ class MesaSIREpidemicModel(mesa.Model):
         spatial_new = disease_model_config.spatial_new
         network_new = disease_model_config.network_new
         space_attribute_similarity = disease_model_config.space_attribute_similarity
-        super().__init__(rng=seed)  # self.rng (numpy Generator) and self.random (stdlib Random)
+        super().__init__(rng=seed)
 
         self.n_agents: int = n_agents
         self.world_size: int = world_size
@@ -191,11 +191,11 @@ class MesaSIREpidemicModel(mesa.Model):
     # Initialisation
     # ------------------------------------------------------------------
     def _draw_recovery_time(self) -> int:
-        return max(1, int(self.random.normalvariate(RECOVERY_TIME_MEAN, RECOVERY_TIME_SD)))
+        return max(1, int(self.rng.normal(RECOVERY_TIME_MEAN, RECOVERY_TIME_SD)))
 
     def _draw_new_infection(self) -> tuple[float, int]:
         """(viral_load, recovery_time) of a new infection."""
-        return self.random.uniform(*NEW_VIRAL_LOAD_RANGE), self._draw_recovery_time()
+        return self.rng.uniform(*NEW_VIRAL_LOAD_RANGE), self._draw_recovery_time()
 
     def _populate(self, counts: dict[HealthState, int]) -> None:
         n: int = self.n_agents
@@ -211,7 +211,7 @@ class MesaSIREpidemicModel(mesa.Model):
             for i in order[cursor:cursor + counts[state]]:
                 person: Person = people[i]
                 if state is HealthState.INFECTED:
-                    person.infect(self.random.uniform(*INITIAL_VIRAL_LOAD_RANGE),
+                    person.infect(self.rng.uniform(*INITIAL_VIRAL_LOAD_RANGE),
                                   self._draw_recovery_time())
                     person.days_infected = INITIAL_DAYS_INFECTED  # seeding day, as in the ECS
                     self.seed_locations.append((person.x, person.y))
@@ -262,7 +262,8 @@ class MesaSIREpidemicModel(mesa.Model):
     # Systems
     # ------------------------------------------------------------------
     def _move(self) -> None:
-        self.agents.shuffle_do("move")
+        for person in self.rng.permutation(list(self.agents)):
+            person.move()
 
     def _rewire_network(self) -> None:
         """Dynamic rewiring every ``rewire_every`` steps (ECS ``NetworkRewiringystem``)."""
@@ -290,7 +291,7 @@ class MesaSIREpidemicModel(mesa.Model):
             base: float = self.beta_spatial * source.viral_load / 1000
             neighbors, _ = source.get_neighbors_in_radius(radius=self.transmission_radius)
             for target in [t for t in neighbors if t.state is HealthState.SUSCEPTIBLE]:
-                if self.random.random() < base * (1 - target.immunity):
+                if self.rng.random() < base * (1 - target.immunity):
                     target.infect(*self._draw_new_infection())
 
     def _network_transmission_hazard(self) -> None:
@@ -314,14 +315,14 @@ class MesaSIREpidemicModel(mesa.Model):
                 strength = self.contact_graph[source][contact]["weight"]
                 if contact.state is HealthState.SUSCEPTIBLE:
                     probability: float = adjusted * strength * (1 - contact.immunity) * source.viral_load / 1000
-                    if self.random.random() < probability:
+                    if self.rng.random() < probability:
                         contact.infect(*self._draw_new_infection())
 
     def _resolve_infections(self) -> None:
         """Hazard -> probability p = 1 - exp(-hazard * dt) (ECS ``InfectionResolutionSystem``)."""
         for person in self.agents.select(lambda a: a.state is HealthState.SUSCEPTIBLE and a.hazard > 0):
             probability: float = 1 - math.exp(-person.hazard * self.dt)
-            if self.random.random() < probability:
+            if self.rng.random() < probability:
                 person.infect(*self._draw_new_infection())
             person.hazard = 0.0
 
