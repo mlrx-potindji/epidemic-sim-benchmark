@@ -2,3 +2,7 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+/results/epi_parity_*.json
+/results/runtime_*.json
+/results/*comparison.png
+/results/epidemiological_parity.png
