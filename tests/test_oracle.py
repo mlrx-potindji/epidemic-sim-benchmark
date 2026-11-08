@@ -5,6 +5,7 @@ import pytest
 from experiments.parity.oracle import (
     D,
     I,
+    R,
     S,
     Edges,
     Params,
@@ -88,6 +89,25 @@ def test_recovery_threshold_and_strict_uniform_comparison():
     assert result.inf_age.tolist() == [12]
     assert result.health.tolist() == [D]
     assert result.mobility.tolist() == [0.0]
+
+
+def test_recovery_releases_quarantine_and_restores_mobility():
+    state = make_state(
+        [I],
+        mobility=[2.0],
+        base_mobility=[10.0],
+        infected_age=[11],
+        recovery_duration=[12],
+        quarantined=[True],
+        quarantine_start=[1],
+    )
+    rng = FixedRNG({"recover": 0.0, "rho": 0.0})
+
+    result = progress_disease(state, Params(), rng, step=10)
+
+    assert result.health.tolist() == [R]
+    assert result.quarantined.tolist() == [False]
+    assert result.mobility.tolist() == [10.0]
 
 
 def test_new_infection_progresses_to_age_one_in_same_update():

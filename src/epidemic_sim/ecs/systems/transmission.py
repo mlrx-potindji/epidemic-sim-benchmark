@@ -281,7 +281,8 @@ class NetworkTransmissionSystemNew(esper.Processor):
 class NetworkRewiringystem(esper.Processor):
     def __init__(self, entity_iDs: List, average_contacts: int,  
                  tau: float, alpha: float, diagnostic: bool = False, rewire_every: int = 18,
-                 rng: RandomStreams | None = None):
+                 rng: RandomStreams | None = None,
+                 dispersion: float = REWIRING_DISPERSION):
         super().__init__()
 
         self.entity_iDs = entity_iDs
@@ -292,6 +293,7 @@ class NetworkRewiringystem(esper.Processor):
         self._step = 0
         self.diagnostic = diagnostic
         self.rng = rng or RandomStreams.from_seed(None)
+        self.dispersion = dispersion
 
     def process(self):
 
@@ -300,13 +302,13 @@ class NetworkRewiringystem(esper.Processor):
             return
         
         for entity in self.entity_iDs:
-            if esper.has_component(entity, Dead):
-                continue
             # remove older contact
             if esper.has_component(entity, ContactNetwork):
                 esper.remove_component(entity, ContactNetwork)
+            if esper.has_component(entity, Dead):
+                continue
 
-            k = REWIRING_DISPERSION
+            k = self.dispersion
             num_contacts = max(0, int(self.rng.numpy.negative_binomial(k, k / (k + self.average_contacts))))
 
             if num_contacts == 0:

@@ -7,7 +7,17 @@ import esper
 import numpy as np
 
 from .oracle import D, I, R, S, Edges, Params, State
-from epidemic_sim.disease_model import HealthState, QUARANTINE_EFFECT
+from epidemic_sim.disease_model import (
+    IMMUNITY_AFTER_RECOVERY,
+    NEW_VIRAL_LOAD_RANGE,
+    QUARANTINE_COMPLIANCE,
+    QUARANTINE_DURATION,
+    QUARANTINE_EFFECT,
+    RECOVERY_PROBABILITY_RANGE,
+    RECOVERY_TIME_MEAN,
+    RECOVERY_TIME_SD,
+    HealthState,
+)
 from epidemic_sim.ecs.components import (
     ContactNetwork,
     Dead,
@@ -21,8 +31,12 @@ from epidemic_sim.ecs.components import (
 )
 from epidemic_sim.ecs.simulation import SIREpidemicModel
 from epidemic_sim.ecs.systems.transmission import (
+    DiseaseProgressionSystem,
+    InfectionResolutionSystem,
     MovementSystem,
+    NetworkRewiringystem,
     NetworkTransmissionSystemNew,
+    QuarantineSystem,
     SpatialTransmissionSystemNew,
 )
 from epidemic_sim.mesa import MesaSIREpidemicModel
@@ -33,6 +47,33 @@ from epidemic_sim.randomness import PhaseRandomVariates, RandomStreams
 class PhaseHazards:
     spatial: np.ndarray
     network: np.ndarray
+
+
+@dataclass(frozen=True)
+class RewireResult:
+    edges: Edges
+    requested_degrees: np.ndarray
+    realized_degrees: np.ndarray
+
+
+class _SeededRewireRNG:
+    def __init__(self, seed: int, degree_override: int | None = None) -> None:
+        self.generator = np.random.default_rng(seed)
+        self.degree_override = degree_override
+        self.requested_degrees: list[int] = []
+
+    def negative_binomial(self, n, p, size=None):
+        if self.degree_override is None:
+            values = self.generator.negative_binomial(n, p, size=size)
+        else:
+            shape = () if size is None else size
+            values = np.full(shape, self.degree_override, dtype=np.int64)
+        self.requested_degrees.extend(np.asarray(values).reshape(-1).tolist())
+        values_array = np.asarray(values)
+        return values_array.item() if values_array.ndim == 0 else values
+
+    def choice(self, *args, **kwargs):
+        return self.generator.choice(*args, **kwargs)
 
 
 class _MappedRandomVariates:
@@ -55,10 +96,35 @@ class _MappedRandomVariates:
 
 
 def _validate_supported_params(params: Params) -> None:
-    if params.quarantine_effect != QUARANTINE_EFFECT:
+    if params.rewiring_dispersion <= 0 or params.mean_degree < 0:
+        raise ValueError("rewiring dispersion must be positive and mean degree non-negative")
+    fixed_values = {
+        "quarantine_compliance": (params.quarantine_compliance, QUARANTINE_COMPLIANCE),
+        "quarantine_effect": (params.quarantine_effect, QUARANTINE_EFFECT),
+        "quarantine_duration": (params.quarantine_duration, QUARANTINE_DURATION),
+        "recovery_mean": (params.recovery_mean, RECOVERY_TIME_MEAN),
+        "recovery_sd": (params.recovery_sd, RECOVERY_TIME_SD),
+        "recovery_probability_low": (
+            params.recovery_probability_low,
+            RECOVERY_PROBABILITY_RANGE[0],
+        ),
+        "recovery_probability_high": (
+            params.recovery_probability_high,
+            RECOVERY_PROBABILITY_RANGE[1],
+        ),
+        "viral_load_low": (params.viral_load_low, NEW_VIRAL_LOAD_RANGE[0]),
+        "viral_load_high": (params.viral_load_high, NEW_VIRAL_LOAD_RANGE[1]),
+        "recovered_immunity": (params.recovered_immunity, IMMUNITY_AFTER_RECOVERY),
+    }
+    unsupported = [
+        f"{name}={value} (production value {expected})"
+        for name, (value, expected) in fixed_values.items()
+        if value != expected
+    ]
+    if unsupported:
         raise ValueError(
-            "production implementations use the fixed QUARANTINE_EFFECT "
-            f"({QUARANTINE_EFFECT}), got {params.quarantine_effect}"
+            "adapter parameters differ from fixed production constants: "
+            + ", ".join(unsupported)
         )
 
 
@@ -97,6 +163,7 @@ class MesaAdapter:
             n_agents=state.n,
             world_size=params.world_size,
             initial_infected=min(1, state.n),
+            average_contacts=params.mean_degree,
             beta_spatial=params.beta_spatial,
             beta_network=params.beta_network,
             transmission_radius=params.transmission_radius,
@@ -104,17 +171,30 @@ class MesaAdapter:
             network_new=True,
             enable_quarantine=True,
             dt=params.dt,
+            alpha=params.similarity_length,
+            tau=params.age_similarity_scale,
             collect_spatial=False,
         )
-        self.load(state, edges)
+        self._closed = False
+        try:
+            self.load(state, edges)
+        except Exception:
+            self.close()
+            raise
 
     def __enter__(self) -> MesaAdapter:
         return self
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:
+        self.close()
+
+    def close(self) -> None:
+        if self._closed:
+            return
         self.model.contact_graph.clear()
         for person in list(self.model.space.active_agents):
             person.remove()
+        self._closed = True
 
     def load(self, state: State, edges: Edges) -> None:
         people = list(self.model.space.active_agents)
@@ -189,6 +269,85 @@ class MesaAdapter:
         network = np.asarray([person.hazard for person in people], dtype=float)
         return PhaseHazards(spatial=spatial, network=network)
 
+    def rewire(
+        self, seed: int, degree_override: int | None = None
+    ) -> RewireResult:
+        previous_rng = self.model.rng
+        rng = _SeededRewireRNG(seed, degree_override)
+        self.model.rng = rng
+        try:
+            self.model.contact_graph.clear_edges()
+            self.model._build_similarity_network(
+                self.params.rewiring_dispersion,
+                alive_only=True,
+            )
+        finally:
+            self.model.rng = previous_rng
+        people = list(self.model.space.active_agents)
+        requested = np.asarray(rng.requested_degrees, dtype=np.int64)
+        src, dst, weights = [], [], []
+        for person in people:
+            for other in self.model.contact_graph.successors(person):
+                src.append(person.index)
+                dst.append(other.index)
+                weights.append(self.model.contact_graph[person][other]["weight"])
+        edges = Edges(
+            src=np.asarray(src, dtype=np.int64),
+            dst=np.asarray(dst, dtype=np.int64),
+            w=np.asarray(weights, dtype=float),
+        )
+        degrees = np.bincount(edges.src, minlength=len(people))
+        return RewireResult(edges, requested, degrees)
+
+    def resolve_infections(
+        self,
+        spatial: np.ndarray,
+        network: np.ndarray,
+        rng: PhaseRandomVariates,
+        step: int,
+    ) -> tuple[State, np.ndarray]:
+        people = list(self.model.space.active_agents)
+        spatial = np.asarray(spatial, dtype=float)
+        network = np.asarray(network, dtype=float)
+        if spatial.shape != (len(people),) or network.shape != spatial.shape:
+            raise ValueError("hazard arrays must have one value per agent")
+        combined = spatial + network
+        for person, hazard in zip(people, combined):
+            person.hazard = float(hazard)
+        self.model._resolve_infections(rng, step)
+        probability = 1.0 - np.exp(-combined * self.params.dt)
+        return self.read_state(), probability
+
+    def progress_disease(self, rng: PhaseRandomVariates, step: int) -> State:
+        for person in list(self.model.space.active_agents):
+            if person.state is HealthState.INFECTED:
+                person.progress_disease(rng, step)
+        return self.read_state()
+
+    def quarantine(self, rng: PhaseRandomVariates, step: int) -> State:
+        people = list(self.model.space.active_agents)
+        for person in people:
+            if person.quarantined:
+                person.days_in_quarantine = max(
+                    0, step - int(person._parity_q_start)
+                )
+            if (
+                person.state is HealthState.INFECTED
+                and person.infectious
+                and not person.quarantined
+            ):
+                person.try_quarantine(
+                    self.params.quarantine_compliance,
+                    phase_rng=rng,
+                    step=step,
+                )
+                if person.quarantined:
+                    person._parity_q_start = step
+        for person in people:
+            if person.quarantined:
+                person.tick_quarantine()
+        return self.read_state()
+
 
 class ECSAdapter:
     """Load snapshots into ECS, execute one production phase, and read it back."""
@@ -209,6 +368,7 @@ class ECSAdapter:
             n_agents=state.n,
             world_size=params.world_size,
             initial_infected=min(1, state.n),
+            average_contacts=params.mean_degree,
             beta_spatial=params.beta_spatial,
             beta_network=params.beta_network,
             transmission_radius=params.transmission_radius,
@@ -216,16 +376,28 @@ class ECSAdapter:
             network_new=True,
             enable_quarantine=True,
             dt=params.dt,
+            alpha=params.similarity_length,
+            tau=params.age_similarity_scale,
         )
         self.entity_ids = list(self.model.entity_iDs)
         self.id_map = {entity_id: index for index, entity_id in enumerate(self.entity_ids)}
-        self.load(state, edges)
+        self._closed = False
+        try:
+            self.load(state, edges)
+        except Exception:
+            self.close()
+            raise
 
     def __enter__(self) -> ECSAdapter:
         return self
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:
-        self.model.clean_up()
+        self.close()
+
+    def close(self) -> None:
+        if not self._closed:
+            self.model.clean_up()
+            self._closed = True
 
     def load(self, state: State, edges: Edges) -> None:
         if len(self.entity_ids) != state.n:
@@ -235,6 +407,7 @@ class ECSAdapter:
         self._vload = state.vload.copy()
         self._infection_age = state.inf_age.copy()
         self._recovery_duration = state.rec_dur.copy()
+        self._q_start = state.q_start.copy()
         esper.switch_world(self.model.world_name)
         for index, entity in enumerate(self.entity_ids):
             for component in (*self._HEALTH_COMPONENTS, Quarantined, InfectionHazard):
@@ -336,11 +509,11 @@ class ECSAdapter:
             if esper.has_component(entity, Quarantined):
                 quarantine = esper.component_for_entity(entity, Quarantined)
                 quarantined.append(True)
-                quarantine_starts.append(quarantine.start_day)
+                quarantine_starts.append(self._q_start[index])
                 base_mobilities.append(quarantine.original_mobility)
             else:
                 quarantined.append(False)
-                quarantine_starts.append(0)
+                quarantine_starts.append(self._q_start[index])
                 base_mobilities.append(self._base_mobility[index])
         return State(
             pos=np.asarray(positions, dtype=float),
@@ -388,6 +561,111 @@ class ECSAdapter:
         ).process()
         network = self._read_hazards()
         return PhaseHazards(spatial=spatial, network=network)
+
+    def rewire(
+        self, seed: int, degree_override: int | None = None
+    ) -> RewireResult:
+        esper.switch_world(self.model.world_name)
+        rng = _SeededRewireRNG(seed, degree_override)
+        system = NetworkRewiringystem(
+            self.entity_ids,
+            self.params.mean_degree,
+            self.params.age_similarity_scale,
+            self.params.similarity_length,
+            rewire_every=1,
+            rng=RandomStreams(numpy=rng),
+            dispersion=self.params.rewiring_dispersion,
+        )
+        system.process()
+        degrees_by_entity = {
+            entity: degree
+            for entity, degree in zip(
+                (entity for entity in self.entity_ids if not esper.has_component(entity, Dead)),
+                rng.requested_degrees,
+            )
+        }
+        requested = np.asarray(
+            [degrees_by_entity.get(entity, 0) for entity in self.entity_ids],
+            dtype=np.int64,
+        )
+        sources = []
+        targets = []
+        weights = []
+        for entity in self.entity_ids:
+            if not esper.has_component(entity, ContactNetwork):
+                continue
+            network = esper.component_for_entity(entity, ContactNetwork)
+            for target, weight in zip(network.contacts, network.contact_strength):
+                sources.append(self.id_map[entity])
+                targets.append(self.id_map[target])
+                weights.append(weight)
+        edges = Edges(
+            src=np.asarray(sources, dtype=np.int64),
+            dst=np.asarray(targets, dtype=np.int64),
+            w=np.asarray(weights, dtype=float),
+        )
+        degrees = np.bincount(edges.src, minlength=len(self.entity_ids))
+        return RewireResult(edges, requested, degrees)
+
+    def resolve_infections(
+        self,
+        spatial: np.ndarray,
+        network: np.ndarray,
+        rng: PhaseRandomVariates,
+        step: int,
+    ) -> tuple[State, np.ndarray]:
+        spatial = np.asarray(spatial, dtype=float)
+        network = np.asarray(network, dtype=float)
+        if spatial.shape != (len(self.entity_ids),) or network.shape != spatial.shape:
+            raise ValueError("hazard arrays must have one value per agent")
+        combined = spatial + network
+        esper.switch_world(self.model.world_name)
+        for entity, hazard in zip(self.entity_ids, combined):
+            if esper.has_component(entity, InfectionHazard):
+                esper.remove_component(entity, InfectionHazard)
+            if esper.has_component(entity, Susceptible):
+                esper.add_component(entity, InfectionHazard(float(hazard)))
+        InfectionResolutionSystem(self.params.dt, self.model.rng).process(
+            phase_rng=_MappedRandomVariates(rng, self.id_map),
+            step=step,
+        )
+        probability = 1.0 - np.exp(-combined * self.params.dt)
+        return self.read_state(), probability
+
+    def progress_disease(self, rng: PhaseRandomVariates, step: int) -> State:
+        esper.switch_world(self.model.world_name)
+        for index, entity in enumerate(self.entity_ids):
+            if esper.has_component(entity, Infected):
+                self._infection_age[index] += 1
+        DiseaseProgressionSystem(self.model.rng).process(
+            phase_rng=_MappedRandomVariates(rng, self.id_map),
+            step=step,
+        )
+        return self.read_state()
+
+    def quarantine(self, rng: PhaseRandomVariates, step: int) -> State:
+        esper.switch_world(self.model.world_name)
+        was_quarantined = np.asarray(
+            [esper.has_component(entity, Quarantined) for entity in self.entity_ids],
+            dtype=bool,
+        )
+        for index, entity in enumerate(self.entity_ids):
+            if was_quarantined[index]:
+                quarantine = esper.component_for_entity(entity, Quarantined)
+                quarantine.days_in_quarantine = max(
+                    0, step - int(self._q_start[index])
+                )
+        QuarantineSystem(
+            self.params.quarantine_compliance,
+            self.model.rng,
+        ).process(
+            phase_rng=_MappedRandomVariates(rng, self.id_map),
+            step=step,
+        )
+        for index, entity in enumerate(self.entity_ids):
+            if not was_quarantined[index] and esper.has_component(entity, Quarantined):
+                self._q_start[index] = step
+        return self.read_state()
 
     def _read_hazards(self) -> np.ndarray:
         return np.asarray(

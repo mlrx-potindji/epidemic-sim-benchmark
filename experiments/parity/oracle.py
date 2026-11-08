@@ -44,6 +44,7 @@ class Params:
     viral_load_high: float = 1000.0
     recovered_immunity: float = 0.9
     mean_degree: float = 10.0
+    rewiring_dispersion: float = 0.5
 
 
 @dataclass
@@ -169,7 +170,7 @@ def resolve_infection(
 def progress_disease(
     state: State, params: Params, rng: RandomVariates, step: int
 ) -> State:
-    """Age infections, then resolve recovery or death at the duration threshold."""
+    """Age infections, resolve due outcomes, and release recovered agents."""
     out = state.copy()
     infected = out.health == I
     out.inf_age[infected] += 1
@@ -181,6 +182,9 @@ def progress_disease(
     dead = due & ~recovered
     out.health[recovered] = R
     out.immunity[recovered] = params.recovered_immunity
+    recovered_quarantined = recovered & out.quarantined
+    out.mobility[recovered_quarantined] = out.base_mobility[recovered_quarantined]
+    out.quarantined[recovered_quarantined] = False
     out.health[dead] = D
     out.mobility[dead] = 0.0
     return out
