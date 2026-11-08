@@ -134,3 +134,26 @@ def test_parity_reports_pool_replicates_and_both_plots_render(tmp_path):
     plot_parity(reports, tmp_path / "parity.png")
     assert (tmp_path / "runtime.png").stat().st_size > 0
     assert (tmp_path / "parity.png").stat().st_size > 0
+
+
+def test_parity_reports_from_different_protocols_are_not_pooled():
+    reports = [
+        (
+            Path(f"protocol-{version}.json"),
+            {
+                "args": {
+                    "scenario": "hazard_similarity",
+                    "n_agents": 300,
+                    "world_size": 200,
+                    "max_steps": 300,
+                },
+                "analysis": {"protocol_version": version},
+                "runs": {framework: [] for framework in ("ecs", "mesa")},
+            },
+        )
+        for version in (3, 4)
+    ]
+
+    groups = group_parity_reports(reports)
+
+    assert [group["key"][4] for group in groups] == [3, 4]
