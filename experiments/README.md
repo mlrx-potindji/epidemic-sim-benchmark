@@ -88,12 +88,38 @@ recovery, and quarantine entry are kept stable in that module. Verify the seam
 with `uv run pytest tests/test_keyed_rng.py`.
 
 The production adapters in [`experiments/parity/adapters.py`](parity/adapters.py)
-load explicit oracle snapshots into one Mesa or ECS instance, execute movement
-or spatial/network hazard calculation, and return the resulting state or
-hazard arrays. Each adapter is a context manager so its test model is cleaned
-up after use. Both implementations are compared independently with the oracle
-on the same snapshots by `uv run pytest tests/test_parity_adapters.py`; additional
-phases should be connected and validated one at a time.
+load explicit oracle snapshots into one Mesa or ECS instance, execute a single
+phase, and return the resulting state or hazard arrays. Movement, hazards,
+infection resolution, disease progression, and quarantine are each compared
+independently with the oracle. Boundary cases cover inclusive spatial radius,
+strict infection/recovery/quarantine-entry comparisons, infection-age and
+recovery-duration thresholds, quarantine expiry, and immediate quarantine
+entry ticks. Failures report the phase, state/hazard field, and affected agent
+IDs. Each adapter is a context manager so its test model is cleaned up after
+use; tests intentionally compare phase outputs rather than full trajectories,
+which can magnify harmless floating-point differences.
+
+[`experiments/parity/loop_adapter.py`](parity/loop_adapter.py) is a separately
+written scalar implementation used only to validate the oracle/test harness.
+`uv run pytest tests/test_parity_mutations.py` checks the clean loop against
+the oracle, runs 17 catalogued mutations, and deliberately alters the real
+Mesa/ECS spatial-hazard calculation to verify that the adapters expose a
+specific omitted-immunity defect. This mutation score is evidence that tests
+detect the planted faults, not evidence that the frozen equations are
+scientifically correct.
+
+Rewiring is validated separately by `uv run pytest tests/test_rewiring_parity.py`.
+The structural/raw-weight check uses adapter seed `1901` and rewire seed `7319`,
+with non-default similarity scales (`alpha=3.5`, `tau=11`) and checks edges
+against those active values. Degree-distribution tests use 1,800 agents,
+`mean_degree=6`, `dispersion=0.6`, and rewire seeds `8141` and `8142`; the
+sample mean tolerance is four theoretical standard errors and the binned
+negative-binomial chi-square test requires `p > 0.001` (bins 0 through 11 and
+12 or more). Weighted inclusion probabilities use 2,000 independently seeded
+rewires (`12000` through `13999`), fixed degree two, and the oracle's exact
+successive-sampling probabilities; each empirical inclusion rate must be
+within five binomial standard errors plus `0.005`. Failures include the seed
+and measured/expected values.
 
 The following choices were checked against the manuscript equations and the
 current ECS and Mesa update paths. They are the parity oracle's required
@@ -125,11 +151,26 @@ implementations and the manuscript.
    from the specified normal distribution. Python's integer conversion
    truncates toward zero; it does not round to nearest.
 
+The phase tests explicitly check these choices: same-update infection ageing,
+the inclusive recovery-duration threshold and strict recovery comparison,
+quarantine entry/expiry ordering and mobility changes, dead-agent rewiring
+exclusion/degree caps, and truncation of fractional recovery durations.
+When a test reports a first divergence, it identifies the tested phase, field,
+and agent IDs; that localizes a mismatch but does not decide which equation is
+scientifically justified. Recheck the relevant numbered choice and manuscript
+equation before changing implementation or oracle. An oracle/implementation
+agreement can still reproduce a mistaken or underspecified equation.
+
 The quarantine order above matches both production update paths but differs
 from decision D3 in the archived scripts under `revisiting benchmark`, which
 release expired quarantine before attempting entry and therefore permit
-same-update re-entry. That archived oracle must be corrected to this frozen
-rule before it is ported into the maintained benchmark workflow.
+same-update re-entry. The archived oracle must not be used as evidence for the
+maintained D3 choice without being corrected.
+
+The `Phase parity` GitHub Actions workflow runs keyed-randomness, oracle,
+phase-adapter, mutation-sensitivity, and rewiring tests on pushes and pull
+requests. Keep these checks ahead of any interpretation of outcome-level
+comparisons.
 
 ## 3. Measure runtime
 

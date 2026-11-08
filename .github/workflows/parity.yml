@@ -1,0 +1,30 @@
+name: Phase parity
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --locked --all-groups
+      - name: Run keyed, phase, mutation, and rewiring parity tests
+        run: >-
+          uv run pytest -q
+          tests/test_keyed_rng.py
+          tests/test_oracle.py
+          tests/test_parity_adapters.py
+          tests/test_parity_mutations.py
+          tests/test_rewiring_parity.py
