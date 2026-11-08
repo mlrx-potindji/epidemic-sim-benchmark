@@ -21,6 +21,7 @@ from ..disease_model import (
     RECOVERY_PROBABILITY_RANGE,
     HealthState,
 )
+from ..randomness import PhaseRandomVariates
 
 if TYPE_CHECKING:
     from .model import MesaSIREpidemicModel
@@ -86,11 +87,20 @@ class Person(ContinuousSpaceAgent):
     # ------------------------------------------------------------------
     # Behaviours called by the model through ``AgentSet.do(...)``
     # ------------------------------------------------------------------
-    def move(self) -> None:
+    def move(self, phase_rng: PhaseRandomVariates | None = None, step: int = 0) -> None:
         """Random walk bounded to the square world (the dead have mobility 0)."""
         if self.mobility > 0:
-            step: np.ndarray = self.model.rng.uniform(-self.mobility, self.mobility, 2)
-            self.position = np.clip(self.position + step, 0, self.space.dimensions[:, 1])
+            if phase_rng is None:
+                displacement = self.model.rng.uniform(-self.mobility, self.mobility, 2)
+            else:
+                ids = np.asarray([self.index])
+                displacement = np.array([
+                    (2 * phase_rng.uniform("move_x", step, ids)[0] - 1) * self.mobility,
+                    (2 * phase_rng.uniform("move_y", step, ids)[0] - 1) * self.mobility,
+                ])
+            self.position = np.clip(
+                self.position + displacement, 0, self.space.dimensions[:, 1]
+            )
 
     def choose_contacts(self, wanted: int, ages: np.ndarray, alive: np.ndarray,
                         alpha: float, tau: float) -> tuple[list["Person"], list[float]]:
@@ -112,14 +122,23 @@ class Person(ContinuousSpaceAgent):
             len(weights), size=min(wanted, candidates), replace=False, p=weights / total)
         return [people[j] for j in chosen], weights[chosen].tolist()
 
-    def progress_disease(self) -> None:
+    def progress_disease(
+        self, phase_rng: PhaseRandomVariates | None = None, step: int = 0
+    ) -> None:
         """Infected: count one more day, then recover or die (ECS ``DiseaseProgressionSystem``)."""
         if self.state is not HealthState.INFECTED:
             return
         self.days_infected += 1
         if self.days_infected >= self.recovery_time:
             rng = self.model.rng
-            recovers: bool = rng.random() < rng.uniform(*RECOVERY_PROBABILITY_RANGE)
+            if phase_rng is None:
+                recovers = rng.random() < rng.uniform(*RECOVERY_PROBABILITY_RANGE)
+            else:
+                ids = np.asarray([self.index])
+                rho = RECOVERY_PROBABILITY_RANGE[0] + (
+                    RECOVERY_PROBABILITY_RANGE[1] - RECOVERY_PROBABILITY_RANGE[0]
+                ) * phase_rng.uniform("rho", step, ids)[0]
+                recovers = phase_rng.uniform("recover", step, ids)[0] < rho
             if recovers:
                 self.state = HealthState.RECOVERED
                 self.immunity = IMMUNITY_AFTER_RECOVERY
@@ -130,9 +149,20 @@ class Person(ContinuousSpaceAgent):
                 self.state = HealthState.DEAD
                 self.mobility = 0.0
 
-    def try_quarantine(self, compliance: float) -> None:
+    def try_quarantine(
+        self,
+        compliance: float,
+        phase_rng: PhaseRandomVariates | None = None,
+        step: int = 0,
+    ) -> None:
         """Infectious agents enter quarantine with probability ``compliance``."""
-        if self.model.rng.random() < compliance:
+        if phase_rng is None:
+            enters = self.model.rng.random() < compliance
+        else:
+            enters = phase_rng.uniform(
+                "quar_enter", step, np.asarray([self.index])
+            )[0] < compliance
+        if enters:
             self.quarantined = True
             self.quarantine_compliance = compliance
             self.quarantine_duration = QUARANTINE_DURATION

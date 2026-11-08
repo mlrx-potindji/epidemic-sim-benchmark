@@ -5,7 +5,7 @@ import numpy as np
 import esper
 import math
 import uuid
-from ..randomness import RandomStreams
+from ..randomness import PhaseRandomVariates, RandomStreams
 from ..config import SimulationConfig
 from ..disease_model import (
     AGE_RANGE,
@@ -182,18 +182,31 @@ class SIREpidemicModel:
     def _register_systems(self, spatial_new: bool, network_new: bool,
                           enable_quarantine: bool):
         """Install all processors for this model's world in execution order."""
-        esper.add_processor(MovementSystem(self.world_size, self.world_size, self.rng), priority=100)
+        self._phase_processors = []
+        movement = MovementSystem(self.world_size, self.world_size, self.rng)
+        esper.add_processor(movement, priority=100)
+        self._phase_processors.append(movement)
         spatial_system = SpatialTransmissionSystemNew if spatial_new else SpatialTransmissionSystem
         network_system = NetworkTransmissionSystemNew if network_new else NetworkTransmissionSystem
-        esper.add_processor(spatial_system(self.transmission_radius, self.beta_spatial, self.rng), priority=90)
-        esper.add_processor(network_system(self.beta_network, self.rng), priority=80)
+        spatial = spatial_system(self.transmission_radius, self.beta_spatial, self.rng)
+        esper.add_processor(spatial, priority=90)
+        if not spatial_new:
+            self._phase_processors.append(spatial)
+        network = network_system(self.beta_network, self.rng)
+        esper.add_processor(network, priority=80)
+        if not network_new:
+            self._phase_processors.append(network)
         if spatial_new or network_new:
-            esper.add_processor(InfectionResolutionSystem(self.dt, self.rng), priority=70)
-        esper.add_processor(DiseaseProgressionSystem(self.rng), priority=60)
+            resolution = InfectionResolutionSystem(self.dt, self.rng)
+            esper.add_processor(resolution, priority=70)
+            self._phase_processors.append(resolution)
+        progression = DiseaseProgressionSystem(self.rng)
+        esper.add_processor(progression, priority=60)
+        self._phase_processors.append(progression)
         if enable_quarantine:
-            esper.add_processor(
-                QuarantineSystem(QUARANTINE_COMPLIANCE, self.rng), priority=60
-            )
+            quarantine = QuarantineSystem(QUARANTINE_COMPLIANCE, self.rng)
+            esper.add_processor(quarantine, priority=60)
+            self._phase_processors.append(quarantine)
         if hasattr(self, "_uses_similarity_network") and self._uses_similarity_network:
             esper.add_processor(NetworkRewiringystem(
                 self.entity_iDs, self.average_contacts, self.tau, self.alpha,
@@ -467,7 +480,11 @@ class SIREpidemicModel:
     # Simulation step method
     # --------------------------------------------------
       
-    def step(self):
+    def step(
+        self,
+        phase_rng: PhaseRandomVariates | None = None,
+        phase_step: int | None = None,
+    ):
         """
         Advances the simulation by one step, processing all systems in the world.
 
@@ -479,7 +496,19 @@ class SIREpidemicModel:
         """
         
         esper.switch_world(self.world_name)
-        esper.process()
+        if phase_rng is None:
+            esper.process()
+        else:
+            step = self.step_count + 1 if phase_step is None else phase_step
+            for processor in self._phase_processors:
+                processor._injected_phase_rng = phase_rng
+                processor._injected_phase_step = step
+            try:
+                esper.process()
+            finally:
+                for processor in self._phase_processors:
+                    del processor._injected_phase_rng
+                    del processor._injected_phase_step
 
         self._collect_data()  # Collect data after processing systems
         if self.collect_spatial:

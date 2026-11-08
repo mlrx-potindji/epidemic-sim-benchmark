@@ -2,7 +2,7 @@ import math
 import esper
 import numpy as np
 from ..components import *
-from ...randomness import RandomStreams
+from ...randomness import PhaseRandomVariates, RandomStreams
 from ...disease_model import (
     IMMUNITY_AFTER_RECOVERY,
     NEW_VIRAL_LOAD_RANGE,
@@ -13,6 +13,16 @@ from ...disease_model import (
     RECOVERY_TIME_SD,
     REWIRING_DISPERSION,
 )
+
+
+def _phase_context(processor, phase_rng, step):
+    """Resolve explicit processor injection or a model-level test context."""
+    if phase_rng is None:
+        phase_rng = getattr(processor, "_injected_phase_rng", None)
+        if phase_rng is not None:
+            step = processor._injected_phase_step
+    return phase_rng, step
+
 
 # --------------------------------------------------
 # MovementSystem
@@ -28,14 +38,20 @@ class MovementSystem(esper.Processor):
         self.height = world_height
         self.rng = rng
         
-    def process(self):
+    def process(self, phase_rng: PhaseRandomVariates | None = None, step: int = 0):
+        phase_rng, step = _phase_context(self, phase_rng, step)
 
         # list[tuple[int, tuple[_C, _C2]]] == list[tuple[entity_iD, (Location, Demographics)]]
         for entity, (location, demographics) in esper.get_components(Location, Demographics):
             # Random walk based on mobility
             mobility = demographics.mobility
-            dx = self.rng.numpy.uniform(-mobility, mobility)
-            dy = self.rng.numpy.uniform(-mobility, mobility)
+            if phase_rng is None:
+                dx = self.rng.numpy.uniform(-mobility, mobility)
+                dy = self.rng.numpy.uniform(-mobility, mobility)
+            else:
+                ids = np.asarray([entity])
+                dx = (2 * phase_rng.uniform("move_x", step, ids)[0] - 1) * mobility
+                dy = (2 * phase_rng.uniform("move_y", step, ids)[0] - 1) * mobility
 
             # Update location
             location.x = max(0, min(self.width, location.x + dx))
@@ -54,7 +70,8 @@ class SpatialTransmissionSystem(esper.Processor):
         self.base_prob = base_transmission_prob
         self.rng = rng
 
-    def process(self):
+    def process(self, phase_rng: PhaseRandomVariates | None = None, step: int = 0):
+        phase_rng, step = _phase_context(self, phase_rng, step)
         # Get all infected and susceptible entities
         infected = list(esper.get_components(Infected, Location))
         susceptible = list(esper.get_components(Susceptible, Location))
@@ -77,22 +94,37 @@ class SpatialTransmissionSystem(esper.Processor):
                     prob = (self.base_prob * inf_status.viral_load / 1000) * (1 - sus_status.immunity) 
 
                     # Attempt transmission
-                    if self.rng.numpy.random() < prob:
+                    if phase_rng is None:
+                        infection_draw = self.rng.numpy.random()
+                    else:
+                        infection_draw = phase_rng.uniform("infect", step, np.asarray([sus_entity]))[0]
+                    if infection_draw < prob:
                         if esper.has_component(sus_entity, Susceptible):
                         # Infect the susceptible entity
                             esper.remove_component(sus_entity, Susceptible)
+                            if phase_rng is None:
+                                viral_load = self.rng.numpy.uniform(*NEW_VIRAL_LOAD_RANGE)
+                                recovery_time = max(
+                                    1,
+                                    int(self.rng.numpy.normal(
+                                        RECOVERY_TIME_MEAN, RECOVERY_TIME_SD
+                                    )),
+                                )
+                            else:
+                                ids = np.asarray([sus_entity])
+                                viral_load = NEW_VIRAL_LOAD_RANGE[0] + (
+                                    NEW_VIRAL_LOAD_RANGE[1] - NEW_VIRAL_LOAD_RANGE[0]
+                                ) * phase_rng.uniform("vload", step, ids)[0]
+                                recovery_time = max(
+                                    1,
+                                    int(RECOVERY_TIME_MEAN + RECOVERY_TIME_SD
+                                        * phase_rng.normal("dur", step, ids)[0]),
+                                )
                             esper.add_component(sus_entity, Infected(
-                                viral_load=self.rng.numpy.uniform(*NEW_VIRAL_LOAD_RANGE),
+                                viral_load=viral_load,
                                 days_infected=0,
                                 infectious=True,
-                                recovery_time=max(
-                                    1,
-                                    int(
-                                        self.rng.numpy.normal(
-                                            RECOVERY_TIME_MEAN, RECOVERY_TIME_SD
-                                        )
-                                    ),
-                                )
+                                recovery_time=recovery_time
                             ))
 
 class SpatialTransmissionSystemNew(esper.Processor):
@@ -146,7 +178,8 @@ class NetworkTransmissionSystem(esper.Processor):
         self.base_prob = base_transmission_prob
         self.rng = rng
 
-    def process(self):
+    def process(self, phase_rng: PhaseRandomVariates | None = None, step: int = 0):
+        phase_rng, step = _phase_context(self, phase_rng, step)
         # Get all infected and susceptible entities
         infected = list(esper.get_components(Infected, ContactNetwork))
 
@@ -171,21 +204,38 @@ class NetworkTransmissionSystem(esper.Processor):
                     sus_status = esper.component_for_entity(contact_iD, Susceptible)
                     prob = adjusted_prob * strength * (1 - sus_status.immunity) * inf_status.viral_load / 1000
 
-                    if self.rng.numpy.random() < prob:
+                    if phase_rng is None:
+                        infection_draw = self.rng.numpy.random()
+                    else:
+                        infection_draw = phase_rng.uniform(
+                            "infect", step, np.asarray([contact_iD])
+                        )[0]
+                    if infection_draw < prob:
                         # Infect the susceptible entity
                         esper.remove_component(contact_iD, Susceptible)
+                        if phase_rng is None:
+                            viral_load = self.rng.numpy.uniform(*NEW_VIRAL_LOAD_RANGE)
+                            recovery_time = max(
+                                1,
+                                int(self.rng.numpy.normal(
+                                    RECOVERY_TIME_MEAN, RECOVERY_TIME_SD
+                                )),
+                            )
+                        else:
+                            ids = np.asarray([contact_iD])
+                            viral_load = NEW_VIRAL_LOAD_RANGE[0] + (
+                                NEW_VIRAL_LOAD_RANGE[1] - NEW_VIRAL_LOAD_RANGE[0]
+                            ) * phase_rng.uniform("vload", step, ids)[0]
+                            recovery_time = max(
+                                1,
+                                int(RECOVERY_TIME_MEAN + RECOVERY_TIME_SD
+                                    * phase_rng.normal("dur", step, ids)[0]),
+                            )
                         esper.add_component(contact_iD, Infected(
-                                viral_load=self.rng.numpy.uniform(*NEW_VIRAL_LOAD_RANGE),
+                                viral_load=viral_load,
                             days_infected=0,
                             infectious=True,
-                                recovery_time=max(
-                                    1,
-                                    int(
-                                        self.rng.numpy.normal(
-                                            RECOVERY_TIME_MEAN, RECOVERY_TIME_SD
-                                        )
-                                    ),
-                                )
+                                recovery_time=recovery_time
                         ))
 
 class NetworkTransmissionSystemNew(esper.Processor):
@@ -367,26 +417,40 @@ class InfectionResolutionSystem(esper.Processor):
         self.dt = dt
         self.rng = rng or RandomStreams.from_seed(None)
 
-    def process(self):
+    def process(self, phase_rng: PhaseRandomVariates | None = None, step: int = 0):
+        phase_rng, step = _phase_context(self, phase_rng, step)
         to_resolve = list(esper.get_components(Susceptible, InfectionHazard))
 
         for entity, (susceptible, hazard) in to_resolve:
             prob = 1 - math.exp(-hazard.hazard * self.dt)  # Convert hazard to probability
 
-            if self.rng.numpy.random() < prob:
+            if phase_rng is None:
+                infection_draw = self.rng.numpy.random()
+            else:
+                infection_draw = phase_rng.uniform("infect", step, np.asarray([entity]))[0]
+            if infection_draw < prob:
                 esper.remove_component(entity, Susceptible)
+                if phase_rng is None:
+                    viral_load = self.rng.numpy.uniform(*NEW_VIRAL_LOAD_RANGE)
+                    recovery_time = max(
+                        1,
+                        int(self.rng.numpy.normal(RECOVERY_TIME_MEAN, RECOVERY_TIME_SD)),
+                    )
+                else:
+                    ids = np.asarray([entity])
+                    viral_load = NEW_VIRAL_LOAD_RANGE[0] + (
+                        NEW_VIRAL_LOAD_RANGE[1] - NEW_VIRAL_LOAD_RANGE[0]
+                    ) * phase_rng.uniform("vload", step, ids)[0]
+                    recovery_time = max(
+                        1,
+                        int(RECOVERY_TIME_MEAN + RECOVERY_TIME_SD
+                            * phase_rng.normal("dur", step, ids)[0]),
+                    )
                 esper.add_component(entity, Infected(
-                    viral_load=self.rng.numpy.uniform(*NEW_VIRAL_LOAD_RANGE),
+                    viral_load=viral_load,
                     days_infected = 0,
                     infectious = True,
-                    recovery_time=max(
-                        1,
-                        int(
-                            self.rng.numpy.normal(
-                                RECOVERY_TIME_MEAN, RECOVERY_TIME_SD
-                            )
-                        ),
-                    ),
+                    recovery_time=recovery_time,
                 ))
 
             # Remove the hazard component after processing
@@ -404,7 +468,8 @@ class DiseaseProgressionSystem(esper.Processor):
         super().__init__()
         self.rng = rng or RandomStreams.from_seed(None)
 
-    def process(self):
+    def process(self, phase_rng: PhaseRandomVariates | None = None, step: int = 0):
+        phase_rng, step = _phase_context(self, phase_rng, step)
         for entity, infected in esper.get_component(Infected):
             # Increase days infected
             infected.days_infected += 1
@@ -417,9 +482,17 @@ class DiseaseProgressionSystem(esper.Processor):
             #   and draw from that probability to determine if the entity dies during the infectious period
             #   which would then also impact quarantine end logic in the QuarantineSystem.
             if infected.days_infected >= infected.recovery_time:
-                if self.rng.numpy.random() < self.rng.numpy.uniform(
-                    *RECOVERY_PROBABILITY_RANGE
-                ):
+                if phase_rng is None:
+                    recovers = self.rng.numpy.random() < self.rng.numpy.uniform(
+                        *RECOVERY_PROBABILITY_RANGE
+                    )
+                else:
+                    ids = np.asarray([entity])
+                    rho = RECOVERY_PROBABILITY_RANGE[0] + (
+                        RECOVERY_PROBABILITY_RANGE[1] - RECOVERY_PROBABILITY_RANGE[0]
+                    ) * phase_rng.uniform("rho", step, ids)[0]
+                    recovers = phase_rng.uniform("recover", step, ids)[0] < rho
+                if recovers:
                     esper.remove_component(entity, Infected)
                     esper.add_component(
                         entity, Recovered(immunity=IMMUNITY_AFTER_RECOVERY)
@@ -453,11 +526,18 @@ class QuarantineSystem(esper.Processor):
         self.compliance = quarantine_compliance
         self.rng = rng or RandomStreams.from_seed(None)
 
-    def process(self):
+    def process(self, phase_rng: PhaseRandomVariates | None = None, step: int = 0):
+        phase_rng, step = _phase_context(self, phase_rng, step)
         for entity, (infected, demographics) in esper.get_components(Infected, Demographics):
             if infected.infectious and not esper.has_component(entity, Quarantined):
                 # Quarantine infectious entities with some compliance level
-                if self.rng.numpy.random() < self.compliance:
+                if phase_rng is None:
+                    enters = self.rng.numpy.random() < self.compliance
+                else:
+                    enters = phase_rng.uniform(
+                        "quar_enter", step, np.asarray([entity])
+                    )[0] < self.compliance
+                if enters:
                     esper.add_component(entity, Quarantined(
                         start_day = infected.days_infected,
                         compliance_level = self.compliance,

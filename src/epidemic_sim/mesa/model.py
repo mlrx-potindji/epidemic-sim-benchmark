@@ -60,6 +60,7 @@ from ..disease_model import (
     DiseaseModelConfig,
     HealthState,
 )
+from ..randomness import PhaseRandomVariates
 from ..validation import validate_all
 
 STATE_SERIES_NAMES = {state: state.value for state in HealthState}
@@ -190,11 +191,32 @@ class MesaSIREpidemicModel(mesa.Model):
     # ------------------------------------------------------------------
     # Initialisation
     # ------------------------------------------------------------------
-    def _draw_recovery_time(self) -> int:
+    def _draw_recovery_time(
+        self,
+        phase_rng: PhaseRandomVariates | None = None,
+        step: int = 0,
+        agent_id: int = 0,
+    ) -> int:
+        if phase_rng is not None:
+            normal = phase_rng.normal("dur", step, np.asarray([agent_id]))[0]
+            return max(1, int(RECOVERY_TIME_MEAN + RECOVERY_TIME_SD * normal))
         return max(1, int(self.rng.normal(RECOVERY_TIME_MEAN, RECOVERY_TIME_SD)))
 
-    def _draw_new_infection(self) -> tuple[float, int]:
+    def _draw_new_infection(
+        self,
+        phase_rng: PhaseRandomVariates | None = None,
+        step: int = 0,
+        agent_id: int = 0,
+    ) -> tuple[float, int]:
         """(viral_load, recovery_time) of a new infection."""
+        if phase_rng is not None:
+            viral_draw = phase_rng.uniform(
+                "vload", step, np.asarray([agent_id])
+            )[0]
+            viral_load = NEW_VIRAL_LOAD_RANGE[0] + (
+                NEW_VIRAL_LOAD_RANGE[1] - NEW_VIRAL_LOAD_RANGE[0]
+            ) * viral_draw
+            return viral_load, self._draw_recovery_time(phase_rng, step, agent_id)
         return self.rng.uniform(*NEW_VIRAL_LOAD_RANGE), self._draw_recovery_time()
 
     def _populate(self, counts: dict[HealthState, int]) -> None:
@@ -261,9 +283,11 @@ class MesaSIREpidemicModel(mesa.Model):
     # ------------------------------------------------------------------
     # Systems
     # ------------------------------------------------------------------
-    def _move(self) -> None:
+    def _move(
+        self, phase_rng: PhaseRandomVariates | None = None, step: int = 0
+    ) -> None:
         for person in self.rng.permutation(list(self.agents)):
-            person.move()
+            person.move(phase_rng=phase_rng, step=step)
 
     def _rewire_network(self) -> None:
         """Dynamic rewiring every ``rewire_every`` steps (ECS ``NetworkRewiringystem``)."""
@@ -282,7 +306,9 @@ class MesaSIREpidemicModel(mesa.Model):
                 if target.state is HealthState.SUSCEPTIBLE:
                     target.hazard += base * (1 - target.immunity)
 
-    def _spatial_transmission_immediate(self) -> None:
+    def _spatial_transmission_immediate(
+        self, phase_rng: PhaseRandomVariates | None = None, step: int = 0
+    ) -> None:
         """Sequential spatial transmission (ECS ``SpatialTransmissionSystem``). The neighbours
         are filtered on their state when each source acts, so a person infected by an earlier
         source of the same pass is not drawn again."""
@@ -291,8 +317,16 @@ class MesaSIREpidemicModel(mesa.Model):
             base: float = self.beta_spatial * source.viral_load / 1000
             neighbors, _ = source.get_neighbors_in_radius(radius=self.transmission_radius)
             for target in [t for t in neighbors if t.state is HealthState.SUSCEPTIBLE]:
-                if self.rng.random() < base * (1 - target.immunity):
-                    target.infect(*self._draw_new_infection())
+                if phase_rng is None:
+                    infected = self.rng.random() < base * (1 - target.immunity)
+                else:
+                    infected = phase_rng.uniform(
+                        "infect", step, np.asarray([target.index])
+                    )[0] < base * (1 - target.immunity)
+                if infected:
+                    target.infect(*self._draw_new_infection(
+                        phase_rng, step, target.index
+                    ))
 
     def _network_transmission_hazard(self) -> None:
         """Hazard-based network transmission (ECS ``NetworkTransmissionSystemNew``)."""
@@ -305,7 +339,9 @@ class MesaSIREpidemicModel(mesa.Model):
                     if hazard > 0:
                         contact.hazard += hazard
 
-    def _network_transmission_immediate(self) -> None:
+    def _network_transmission_immediate(
+        self, phase_rng: PhaseRandomVariates | None = None, step: int = 0
+    ) -> None:
         """Sequential network transmission (ECS ``NetworkTransmissionSystem``). The state of a
         contact is read when the draw is made: it may have been infected earlier in the pass."""
         for source in self.agents.select(lambda a: a.state is HealthState.INFECTED and a.infectious
@@ -315,46 +351,82 @@ class MesaSIREpidemicModel(mesa.Model):
                 strength = self.contact_graph[source][contact]["weight"]
                 if contact.state is HealthState.SUSCEPTIBLE:
                     probability: float = adjusted * strength * (1 - contact.immunity) * source.viral_load / 1000
-                    if self.rng.random() < probability:
-                        contact.infect(*self._draw_new_infection())
+                    if phase_rng is None:
+                        infected = self.rng.random() < probability
+                    else:
+                        infected = phase_rng.uniform(
+                            "infect", step, np.asarray([contact.index])
+                        )[0] < probability
+                    if infected:
+                        contact.infect(*self._draw_new_infection(
+                            phase_rng, step, contact.index
+                        ))
 
-    def _resolve_infections(self) -> None:
+    def _resolve_infections(
+        self, phase_rng: PhaseRandomVariates | None = None, step: int = 0
+    ) -> None:
         """Hazard -> probability p = 1 - exp(-hazard * dt) (ECS ``InfectionResolutionSystem``)."""
         for person in self.agents.select(lambda a: a.state is HealthState.SUSCEPTIBLE and a.hazard > 0):
             probability: float = 1 - math.exp(-person.hazard * self.dt)
-            if self.rng.random() < probability:
-                person.infect(*self._draw_new_infection())
+            if phase_rng is None:
+                infected = self.rng.random() < probability
+            else:
+                infected = phase_rng.uniform(
+                    "infect", step, np.asarray([person.index])
+                )[0] < probability
+            if infected:
+                person.infect(*self._draw_new_infection(
+                    phase_rng, step, person.index
+                ))
             person.hazard = 0.0
 
     # ------------------------------------------------------------------
     # One step / run
     # ------------------------------------------------------------------
-    def step(self) -> None:
+    def step(
+        self,
+        phase_rng: PhaseRandomVariates | None = None,
+        phase_step: int | None = None,
+    ) -> None:
         if not self.running:  # nobody left to infect: the remaining steps do nothing
             return
-        self._move()
+        step = self.steps + 1 if phase_step is None else phase_step
+        self._move(phase_rng, step)
         if self._uses_similarity_network:
             self._rewire_network()
         if self.spatial_new:
             self._spatial_transmission_hazard()
         else:
-            self._spatial_transmission_immediate()
+            self._spatial_transmission_immediate(phase_rng, step)
         if self.network_new:
             self._network_transmission_hazard()
         else:
-            self._network_transmission_immediate()
+            self._network_transmission_immediate(phase_rng, step)
         if self.spatial_new or self.network_new:
-            self._resolve_infections()
-        self.agents.select(lambda a: a.state is HealthState.INFECTED).do("progress_disease")
+            self._resolve_infections(phase_rng, step)
+        self.agents.select(lambda a: a.state is HealthState.INFECTED).do(
+            "progress_disease", phase_rng=phase_rng, step=step
+        )
         if self.enable_quarantine:
             self.agents.select(lambda a: a.state is HealthState.INFECTED and a.infectious
-                               and not a.quarantined).do("try_quarantine", QUARANTINE_COMPLIANCE)
+                               and not a.quarantined).do(
+                                   "try_quarantine", QUARANTINE_COMPLIANCE,
+                                   phase_rng=phase_rng, step=step,
+                               )
             self.agents.select(lambda a: a.quarantined).do("tick_quarantine")
 
         self._counts = self.agents.groupby("state").count()
         self.datacollector.collect(self)
         if self._counts.get(HealthState.INFECTED, 0) == 0:
             self.running = False  # same stopping rule as the ECS
+
+    def step_with_phase_rng(
+        self, phase_rng: PhaseRandomVariates, phase_step: int | None = None
+    ) -> None:
+        """Run one model update with injected phase randomness for parity tests."""
+        step = self.steps + 1 if phase_step is None else phase_step
+        self.steps += 1
+        self._user_step(phase_rng=phase_rng, phase_step=step)
 
     def run(self, max_steps: int) -> None:
         """Advance until step ``max_steps`` (``Model.run_until``); the model stops by itself
