@@ -102,6 +102,9 @@ def group_parity_reports(reports: list[tuple[Path, dict[str, Any]]]) -> list[dic
             args["n_agents"],
             args.get("world_size"),
             args.get("max_steps"),
+            report.get("analysis", {}).get(
+                "protocol_version", args.get("benchmark_protocol_version", "legacy")
+            ),
         )
         group = groups.setdefault(
             key,
@@ -175,7 +178,8 @@ def plot_runtime(reports: list[tuple[Path, dict[str, Any]]], output: Path) -> No
 def plot_parity(reports: list[tuple[Path, dict[str, Any]]], output: Path) -> None:
     groups = group_parity_reports(reports)
     labels = [
-        f"{group['key'][0]}\nN={group['key'][1]}, n={len(group['runs']['ecs'])}"
+        f"{group['key'][0]} (v{group['key'][4]})\n"
+        f"N={group['key'][1]}, n={len(group['runs']['ecs'])}"
         for group in groups
     ]
     centers = list(range(1, len(groups) + 1))

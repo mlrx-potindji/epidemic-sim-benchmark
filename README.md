@@ -86,8 +86,19 @@ the core dependencies because its current releases do not resolve for Python
 ## ECS vs Mesa Benchmark
 
 Follow the step-by-step protocol in [experiments/README.md](experiments/README.md).
-In short, check structural parity, run independent epidemiological replicates,
-then measure runtime at fixed population sizes and steps:
+In short, check structural parity, fix outcome-equivalence margins from a
+separate pilot, run fresh confirmatory epidemiological replicates, then measure
+runtime at fixed population sizes and steps:
+
+Run the full tests, parity scenarios, corrected runtime sweep, and plotting in
+one command with:
+
+```bash
+bash experiments/scripts/run_full_benchmark.sh
+```
+
+It saves reports, logs, a manifest, and figures under a timestamped
+`results/full_benchmark_*` directory. For individual steps:
 
 ```bash
 uv run pytest tests/test_structural_parity.py
